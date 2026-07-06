@@ -1,0 +1,1850 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CS 3D 戰術拆彈模擬器 (CS Tactical Simulator)</title>
+    <!-- Tailwind CSS for UI -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Three.js Library -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            user-select: none;
+            background-color: #0d0d0c;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        #game-container {
+            width: 100%;
+            height: 100%;
+            position: absolute;
+        }
+        /* CSS Scope effect for AWP */
+        #sniper-scope {
+            display: none;
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 10;
+        }
+        .scope-overlay {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            background: radial-gradient(circle, transparent 30%, rgba(0,0,0,0.95) 35%);
+        }
+        .scope-cross-h {
+            position: absolute;
+            top: 50%;
+            left: 0;
+            width: 100%;
+            height: 2px;
+            background: #00ff00;
+            transform: translateY(-50%);
+        }
+        .scope-cross-v {
+            position: absolute;
+            left: 50%;
+            top: 0;
+            width: 2px;
+            height: 100%;
+            background: #00ff00;
+            transform: translateX(-50%);
+        }
+        /* Red flash when hurt */
+        #damage-flash {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(255, 0, 0, 0);
+            pointer-events: none;
+            z-index: 5;
+            transition: background-color 0.1s ease-out;
+        }
+        /* Pointer lock block clicker */
+        #blocker {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.7);
+            z-index: 20;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            color: #fff;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- UI Overlay for Game Loading & State -->
+    <div id="blocker" class="text-center p-6">
+        <div id="start-menu" class="max-w-md bg-zinc-900 border-2 border-amber-500 rounded-lg p-8 shadow-2xl overflow-y-auto max-h-[95vh]">
+            <h1 class="text-4xl font-extrabold text-amber-500 mb-2 tracking-widest uppercase">CS 3D TACTICAL</h1>
+            <p class="text-zinc-400 text-sm mb-4">反恐精英：3D戰術拆彈模擬器</p>
+            
+            <div class="bg-zinc-800 p-4 rounded text-left text-xs text-zinc-300 space-y-2 mb-4 border border-zinc-700">
+                <p class="text-amber-400 font-bold text-center text-sm mb-1">【任務簡報 - 拆除 A 點 C4】</p>
+                <p>1. 佔領爆破點：擊殺所有把守爆破 A 區的恐怖份子。</p>
+                <p>2. 拆除 C4：靠近中央閃爍紅光的 C4，並<span class="text-amber-400 font-bold">按住 [E] 鍵 5 秒</span>進行拆彈。</p>
+                <p>3. 限時挑戰：必須在時間結束前完成拆彈，否則 C4 爆炸！</p>
+            </div>
+
+            <!-- Tactical Settings Selection Panel -->
+            <div class="bg-zinc-950 p-4 rounded border border-zinc-800 space-y-4 mb-4">
+                <p class="text-zinc-400 font-bold text-center text-xs tracking-wider uppercase">⚙️ 戰術任務配置</p>
+                
+                <!-- Difficulty dropdown -->
+                <div class="text-left">
+                    <label class="text-[10px] text-zinc-500 font-bold block mb-1 uppercase tracking-wider">任務難度分級 (Difficulty)</label>
+                    <select id="difficulty-select" class="w-full bg-zinc-800 text-zinc-200 border border-zinc-700 rounded px-2.5 py-1.5 text-xs focus:outline-none focus:border-amber-500">
+                        <option value="easy">輕鬆模式 (Easy Ops) - 適合新手練習</option>
+                        <option value="normal" selected>標準行動 (Normal Ops) - 經典平衡對決</option>
+                        <option value="hard">戰術考驗 (Hard Ops) - 敵人火力增強</option>
+                        <option value="expert">惡夢狂瀾 (Expert Ops) - 頂尖高難挑戰</option>
+                    </select>
+                </div>
+
+                <!-- Modifiers dropdown -->
+                <div class="text-left">
+                    <label class="text-[10px] text-zinc-500 font-bold block mb-1 uppercase tracking-wider">突發狀況修飾器 (Modifier)</label>
+                    <select id="modifier-select" class="w-full bg-zinc-800 text-zinc-200 border border-zinc-700 rounded px-2.5 py-1.5 text-xs focus:outline-none focus:border-amber-500">
+                        <option value="random" selected>🎲 隨機突發狀況 (Random Modifier)</option>
+                        <option value="normal">無突發狀況 (Standard Ops) - 經典環境</option>
+                        <option value="fog">🌫️ 迷霧籠罩 (Dense Fog)</option>
+                        <option value="night">🌙 夜間突襲 (Night Ops)</option>
+                        <option value="heavy">🛡️ 重灌突圍 (Heavy Armor)</option>
+                        <option value="furious">🔥 狂暴火力 (Furious Fire)</option>
+                        <option value="speedrun">⏰ 時限緊迫 (Tactical Speedrun)</option>
+                    </select>
+                </div>
+
+                <!-- Settings Slider -->
+                <div class="text-left">
+                    <label class="text-[10px] text-zinc-500 font-bold block mb-1 uppercase tracking-wider">滑鼠靈敏度 (Sensitivity)</label>
+                    <input type="range" id="sens-slider" min="0.5" max="4.0" step="0.1" value="1.8" class="w-full accent-amber-500">
+                </div>
+            </div>
+
+            <button id="play-button" class="w-full bg-amber-500 hover:bg-amber-600 text-zinc-950 font-bold text-lg py-3 px-6 rounded uppercase transition-colors duration-200 shadow-md transform hover:scale-105">
+                部署並開始
+            </button>
+            <p class="text-[10px] text-zinc-500 mt-3">注意：進入遊戲後點擊畫面會鎖定滑鼠。按 ESC 鍵可解鎖滑鼠。</p>
+        </div>
+    </div>
+
+    <!-- Active Game Screen Container -->
+    <div id="game-container"></div>
+
+    <!-- CSS Fullscreen Damage Flash -->
+    <div id="damage-flash"></div>
+
+    <!-- Fullscreen Sniper Scope Overlay -->
+    <div id="sniper-scope">
+        <div class="scope-overlay"></div>
+        <div class="scope-cross-h"></div>
+        <div class="scope-cross-v"></div>
+    </div>
+
+    <!-- Headshot Alert Popup -->
+    <div id="headshot-alert" class="absolute top-1/4 left-1/2 transform -translate-x-1/2 -translate-y-1/2 pointer-events-none opacity-0 scale-50 transition-all duration-300 z-30 flex flex-col items-center">
+        <span class="text-amber-500 text-6xl drop-shadow-[0_4px_6px_rgba(0,0,0,0.8)] font-black italic tracking-wider">HEADSHOT!</span>
+        <svg class="w-16 h-16 text-amber-500 mt-2 filter drop-shadow-md" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <!-- Simplified skull SVG -->
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+        </svg>
+    </div>
+
+    <!-- Kill Feed Tracker (Top-Right) -->
+    <div id="kill-feed" class="absolute top-4 right-4 z-10 flex flex-col items-end space-y-2 pointer-events-none">
+        <!-- Dynmically populated kill alerts -->
+    </div>
+
+    <!-- Interactive Buy / Selection bar at bottom -->
+    <div id="weapons-bar" class="absolute bottom-16 left-1/2 transform -translate-x-1/2 z-10 flex space-x-2 bg-black/60 backdrop-blur-sm p-1.5 rounded-lg border border-zinc-800">
+        <button id="wpn-btn-1" onclick="switchWeapon(0)" class="px-4 py-2 rounded text-xs font-bold border transition-all duration-150 text-amber-400 border-amber-500 bg-amber-500/10">
+            [1] AK-47
+        </button>
+        <button id="wpn-btn-2" onclick="switchWeapon(1)" class="px-4 py-2 rounded text-xs font-bold border transition-all duration-150 text-zinc-400 border-zinc-700 bg-zinc-900/40">
+            [2] AWP
+        </button>
+        <button id="wpn-btn-3" onclick="switchWeapon(2)" class="px-4 py-2 rounded text-xs font-bold border transition-all duration-150 text-zinc-400 border-zinc-700 bg-zinc-900/40">
+            [3] DEAGLE
+        </button>
+    </div>
+
+    <!-- Tactical CS HUD HUD Overlay -->
+    <div class="absolute bottom-4 left-4 z-10 flex items-center space-x-6 text-white bg-black/50 backdrop-blur-sm px-6 py-3 rounded-md border border-zinc-800 pointer-events-none">
+        <!-- HP -->
+        <div class="flex items-center space-x-2">
+            <span class="text-zinc-400 text-xs font-bold uppercase tracking-wider">HP</span>
+            <span id="hud-hp" class="text-3xl font-extrabold text-green-400 tracking-tight">100</span>
+        </div>
+        <!-- AP (Armor) -->
+        <div class="flex items-center space-x-2 border-l border-zinc-800 pl-6">
+            <span class="text-zinc-400 text-xs font-bold uppercase tracking-wider">ARMOR</span>
+            <span id="hud-armor" class="text-3xl font-extrabold text-blue-400 tracking-tight">100</span>
+        </div>
+    </div>
+
+    <!-- Timer and C4 Alert Indicator (Top Center) -->
+    <div class="absolute top-4 left-1/2 transform -translate-x-1/2 z-10 flex flex-col items-center pointer-events-none">
+        <div class="bg-black/60 backdrop-blur-sm border border-zinc-800 px-6 py-2 rounded-md flex items-center space-x-4">
+            <div class="flex flex-col items-center">
+                <span class="text-[10px] text-zinc-400 font-bold uppercase tracking-widest">ROUND TIME</span>
+                <span id="hud-timer" class="text-2xl font-black text-amber-400">45.00</span>
+            </div>
+            <div id="c4-state-box" class="flex items-center space-x-1 border-l border-zinc-800 pl-4">
+                <div id="c4-light" class="w-3.5 h-3.5 rounded-full bg-red-600 animate-pulse border border-red-800 shadow-[0_0_10px_#ef4444]"></div>
+                <span class="text-xs font-bold text-red-500 uppercase tracking-widest">C4 ACTIVE</span>
+            </div>
+        </div>
+        <div id="defuse-tip" class="hidden mt-2 text-xs font-semibold text-amber-400 bg-black/80 px-4 py-1.5 rounded border border-amber-600 animate-bounce">
+            靠近 C4 炸彈並【按住 E 鍵】開始拆除！
+        </div>
+    </div>
+
+    <!-- HUD Mission Modifier status display under round timer -->
+    <div class="absolute top-20 left-1/2 transform -translate-x-1/2 z-10 text-center pointer-events-none">
+        <div class="bg-black/75 backdrop-blur-sm border border-zinc-800/80 px-4 py-1.5 rounded-md flex flex-col items-center max-w-xs">
+            <span id="hud-modifier-title" class="text-xs font-black text-amber-500 tracking-wider">隨機戰術部署中...</span>
+            <span id="hud-modifier-desc" class="text-[9px] text-zinc-400 block mt-0.5 leading-tight">讀取配置中</span>
+        </div>
+    </div>
+
+    <!-- Gun Ammo Status HUD (Bottom Right) -->
+    <div class="absolute bottom-4 right-4 z-10 flex flex-col items-end pointer-events-none">
+        <div class="bg-black/50 backdrop-blur-sm px-6 py-3 rounded-md border border-zinc-800 flex items-center space-x-4">
+            <div class="text-right">
+                <span id="hud-weapon-name" class="text-xs text-zinc-400 font-bold block uppercase tracking-wider">AK-47</span>
+                <div class="flex items-baseline space-x-1">
+                    <span id="hud-ammo-clip" class="text-3xl font-extrabold text-amber-400">30</span>
+                    <span class="text-zinc-500">/</span>
+                    <span id="hud-ammo-reserve" class="text-xl font-bold text-zinc-300">90</span>
+                </div>
+            </div>
+        </div>
+        <span id="reload-prompt" class="hidden text-xs font-bold text-red-400 mt-2 animate-pulse">按 R 鍵重新裝彈！</span>
+    </div>
+
+    <!-- Circular Interactive crosshair in dead center -->
+    <div id="crosshair" class="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 pointer-events-none z-10">
+        <!-- Static thin crosshair -->
+        <div class="relative w-6 h-6 flex items-center justify-center">
+            <div class="absolute w-1.5 h-1.5 bg-green-400 rounded-full"></div>
+            <div class="absolute w-4 h-0.5 bg-green-400 left-0"></div>
+            <div class="absolute w-4 h-0.5 bg-green-400 right-0"></div>
+            <div class="absolute w-0.5 h-4 bg-green-400 top-0"></div>
+            <div class="absolute w-0.5 h-4 bg-green-400 bottom-0"></div>
+        </div>
+    </div>
+
+    <!-- Defuse Progress Bar -->
+    <div id="defuse-progress-container" class="hidden absolute top-2/3 left-1/2 transform -translate-x-1/2 -translate-y-1/2 z-10 w-64 bg-zinc-950/80 p-2 rounded border border-zinc-800 text-center">
+        <span class="text-xs text-amber-400 font-bold block mb-1 tracking-widest uppercase">DEFUSING BOMB...</span>
+        <div class="w-full bg-zinc-800 h-3.5 rounded overflow-hidden p-0.5">
+            <div id="defuse-progress-bar" class="bg-amber-500 h-full w-0 transition-all duration-75"></div>
+        </div>
+    </div>
+
+    <!-- Game Notification Dialog Overlay (Won / Lost) -->
+    <div id="status-modal" class="hidden absolute inset-0 z-30 flex items-center justify-center bg-black/80">
+        <div class="bg-zinc-900 border-2 border-zinc-700 p-8 rounded-lg max-w-sm text-center shadow-2xl">
+            <h2 id="modal-title" class="text-3xl font-black mb-2 tracking-wide text-green-500">MISSION COMPLETED</h2>
+            <p id="modal-subtitle" class="text-zinc-400 text-xs mb-6">Counter-Terrorists win!</p>
+            
+            <div class="bg-zinc-800 p-4 rounded text-xs text-zinc-300 space-y-2 mb-6 text-left border border-zinc-700">
+                <p>任務難度：<span id="modal-stat-diff" class="font-bold text-amber-400">標準</span></p>
+                <p>突發狀況：<span id="modal-stat-modifier" class="font-bold text-amber-500">無</span></p>
+                <p>擊殺恐怖份子數：<span id="modal-stat-kills" class="font-bold text-amber-400">0</span></p>
+                <p>是否成功拆彈：<span id="modal-stat-defused" class="font-bold text-amber-400">是</span></p>
+                <p>賸餘戰略時間：<span id="modal-stat-time" class="font-bold text-amber-400">20.40 秒</span></p>
+            </div>
+
+            <button onclick="restartGame()" class="w-full bg-amber-500 hover:bg-amber-600 text-zinc-950 font-extrabold py-3 px-6 rounded uppercase transition-all duration-200">
+                再次挑戰
+            </button>
+        </div>
+    </div>
+
+    <!-- Mobile HUD Fallback Warning / controls -->
+    <div class="lg:hidden absolute bottom-24 left-2 right-2 bg-black/80 border border-zinc-800 p-2 rounded text-[10px] text-zinc-400 text-center pointer-events-none z-10">
+        📌 偵測到移動設備。本 FPS 模擬器強烈推薦在電腦上使用【鍵盤 & 滑鼠】獲得最佳戰術對決體驗！
+    </div>
+
+    <script>
+        // --- Web Audio API Synthesizer (Realistic SFX Generation) ---
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        
+        function playSound(type) {
+            if (audioCtx.state === 'suspended') {
+                audioCtx.resume();
+            }
+
+            const time = audioCtx.currentTime;
+
+            if (type === 'ak47') {
+                // Punchy, metallic explosion sound
+                const bufferSize = audioCtx.sampleRate * 0.25;
+                const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+                const data = buffer.getChannelData(0);
+                for (let i = 0; i < bufferSize; i++) {
+                    data[i] = Math.random() * 2 - 1;
+                }
+                const noise = audioCtx.createBufferSource();
+                noise.buffer = buffer;
+
+                const filter = audioCtx.createBiquadFilter();
+                filter.type = 'lowpass';
+                filter.frequency.setValueAtTime(800, time);
+                filter.frequency.exponentialRampToValueAtTime(100, time + 0.2);
+
+                const gain = audioCtx.createGain();
+                gain.gain.setValueAtTime(0.7, time);
+                gain.gain.exponentialRampToValueAtTime(0.01, time + 0.22);
+
+                noise.connect(filter);
+                filter.connect(gain);
+                gain.connect(audioCtx.destination);
+                noise.start();
+
+                // High metallic ring
+                const osc = audioCtx.createOscillator();
+                const oscGain = audioCtx.createGain();
+                osc.type = 'triangle';
+                osc.frequency.setValueAtTime(260, time);
+                oscGain.gain.setValueAtTime(0.15, time);
+                oscGain.gain.exponentialRampToValueAtTime(0.01, time + 0.1);
+                osc.connect(oscGain);
+                oscGain.connect(audioCtx.destination);
+                osc.start();
+                osc.stop(time + 0.1);
+
+            } else if (type === 'awp') {
+                // Heavy explosion with long reverberation decay
+                const bufferSize = audioCtx.sampleRate * 0.8;
+                const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+                const data = buffer.getChannelData(0);
+                for (let i = 0; i < bufferSize; i++) {
+                    data[i] = Math.random() * 2 - 1;
+                }
+                const noise = audioCtx.createBufferSource();
+                noise.buffer = buffer;
+
+                const filter = audioCtx.createBiquadFilter();
+                filter.type = 'lowpass';
+                filter.frequency.setValueAtTime(300, time);
+                filter.frequency.exponentialRampToValueAtTime(30, time + 0.7);
+
+                const gain = audioCtx.createGain();
+                gain.gain.setValueAtTime(1.0, time);
+                gain.gain.exponentialRampToValueAtTime(0.005, time + 0.75);
+
+                noise.connect(filter);
+                filter.connect(gain);
+                gain.connect(audioCtx.destination);
+                noise.start();
+
+                // Low thumping tone
+                const subOsc = audioCtx.createOscillator();
+                const subGain = audioCtx.createGain();
+                subOsc.type = 'sawtooth';
+                subOsc.frequency.setValueAtTime(80, time);
+                subOsc.frequency.exponentialRampToValueAtTime(20, time + 0.5);
+                subGain.gain.setValueAtTime(0.4, time);
+                subGain.gain.exponentialRampToValueAtTime(0.01, time + 0.5);
+                subOsc.connect(subGain);
+                subGain.connect(audioCtx.destination);
+                subOsc.start();
+                subOsc.stop(time + 0.5);
+
+            } else if (type === 'deagle') {
+                // Dry punchy sound
+                const bufferSize = audioCtx.sampleRate * 0.3;
+                const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+                const data = buffer.getChannelData(0);
+                for (let i = 0; i < bufferSize; i++) {
+                    data[i] = Math.random() * 2 - 1;
+                }
+                const noise = audioCtx.createBufferSource();
+                noise.buffer = buffer;
+
+                const filter = audioCtx.createBiquadFilter();
+                filter.type = 'lowpass';
+                filter.frequency.setValueAtTime(600, time);
+                filter.frequency.exponentialRampToValueAtTime(80, time + 0.25);
+
+                const gain = audioCtx.createGain();
+                gain.gain.setValueAtTime(0.6, time);
+                gain.gain.exponentialRampToValueAtTime(0.01, time + 0.28);
+
+                noise.connect(filter);
+                filter.connect(gain);
+                gain.connect(audioCtx.destination);
+                noise.start();
+
+            } else if (type === 'reload') {
+                // Double mechanical clicks
+                const click1 = audioCtx.createOscillator();
+                const click1Gain = audioCtx.createGain();
+                click1.type = 'triangle';
+                click1.frequency.setValueAtTime(1000, time);
+                click1Gain.gain.setValueAtTime(0.1, time);
+                click1Gain.gain.exponentialRampToValueAtTime(0.01, time + 0.08);
+                click1.connect(click1Gain);
+                click1Gain.connect(audioCtx.destination);
+                click1.start();
+                click1.stop(time + 0.08);
+
+                const click2 = audioCtx.createOscillator();
+                const click2Gain = audioCtx.createGain();
+                click2.type = 'sawtooth';
+                click2.frequency.setValueAtTime(400, time + 0.35);
+                click2Gain.gain.setValueAtTime(0.12, time + 0.35);
+                click2Gain.gain.exponentialRampToValueAtTime(0.01, time + 0.45);
+                click2.connect(click2Gain);
+                click2Gain.connect(audioCtx.destination);
+                click2.start(time + 0.35);
+                click2.stop(time + 0.45);
+
+            } else if (type === 'switch') {
+                // Quick slick rustle
+                const osc = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+                osc.type = 'triangle';
+                osc.frequency.setValueAtTime(600, time);
+                osc.frequency.exponentialRampToValueAtTime(150, time + 0.1);
+                gain.gain.setValueAtTime(0.1, time);
+                gain.gain.exponentialRampToValueAtTime(0.001, time + 0.1);
+                osc.connect(gain);
+                gain.connect(audioCtx.destination);
+                osc.start();
+                osc.stop(time + 0.1);
+
+            } else if (type === 'beep') {
+                // Sharp warning tone
+                const osc = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(1800, time);
+                gain.gain.setValueAtTime(0.15, time);
+                gain.gain.exponentialRampToValueAtTime(0.001, time + 0.15);
+                osc.connect(gain);
+                gain.connect(audioCtx.destination);
+                osc.start();
+                osc.stop(time + 0.15);
+
+            } else if (type === 'hurt') {
+                // Low physical thud
+                const osc = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+                osc.type = 'triangle';
+                osc.frequency.setValueAtTime(120, time);
+                osc.frequency.exponentialRampToValueAtTime(40, time + 0.15);
+                gain.gain.setValueAtTime(0.25, time);
+                gain.gain.exponentialRampToValueAtTime(0.001, time + 0.15);
+                osc.connect(gain);
+                gain.connect(audioCtx.destination);
+                osc.start();
+                osc.stop(time + 0.15);
+
+            } else if (type === 'victory') {
+                // Upbeat CT victory motif
+                const notes = [329.63, 392.00, 523.25, 659.25, 783.99]; // E4, G4, C5, E5, G5
+                notes.forEach((freq, idx) => {
+                    const osc = audioCtx.createOscillator();
+                    const gain = audioCtx.createGain();
+                    osc.type = 'triangle';
+                    osc.frequency.setValueAtTime(freq, time + idx * 0.12);
+                    gain.gain.setValueAtTime(0.15, time + idx * 0.12);
+                    gain.gain.exponentialRampToValueAtTime(0.001, time + idx * 0.12 + 0.3);
+                    osc.connect(gain);
+                    gain.connect(audioCtx.destination);
+                    osc.start(time + idx * 0.12);
+                    osc.stop(time + idx * 0.12 + 0.3);
+                });
+
+            } else if (type === 'explosion') {
+                // Massive low rumble
+                const bufferSize = audioCtx.sampleRate * 2.5;
+                const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+                const data = buffer.getChannelData(0);
+                for (let i = 0; i < bufferSize; i++) {
+                    data[i] = Math.random() * 2 - 1;
+                }
+                const noise = audioCtx.createBufferSource();
+                noise.buffer = buffer;
+
+                const filter = audioCtx.createBiquadFilter();
+                filter.type = 'lowpass';
+                filter.frequency.setValueAtTime(150, time);
+                filter.frequency.exponentialRampToValueAtTime(10, time + 2.0);
+
+                const gain = audioCtx.createGain();
+                gain.gain.setValueAtTime(1.5, time);
+                gain.gain.exponentialRampToValueAtTime(0.001, time + 2.4);
+
+                noise.connect(filter);
+                filter.connect(gain);
+                gain.connect(audioCtx.destination);
+                noise.start();
+            }
+        }
+
+        // --- Game Configuration & State Variables ---
+        let scene, camera, renderer, clock;
+        let yaw = 0, pitch = 0;
+        let sensitivity = 0.0018;
+        
+        let player = {
+            position: new THREE.Vector3(0, 1.8, 18),
+            velocity: new THREE.Vector3(0, 0, 0),
+            hp: 100,
+            armor: 100,
+            isAlive: true,
+            onGround: true,
+            isDefusing: false,
+            defuseProgress: 0
+        };
+
+        const weaponsConfig = [
+            { name: "AK-47", fireRate: 110, damage: 36, headshotMult: 4, isAuto: true, maxClip: 30, maxReserve: 90, ammoClip: 30, ammoReserve: 90, reloadTime: 2000, modelColor: 0x5c4033, recoilX: 0.003, recoilY: 0.012 },
+            { name: "AWP", fireRate: 1400, damage: 115, headshotMult: 4, isAuto: false, maxClip: 10, maxReserve: 30, ammoClip: 10, ammoReserve: 30, reloadTime: 2600, modelColor: 0x2e5c1e, recoilX: 0.01, recoilY: 0.04, isSniper: true },
+            { name: "Desert Eagle", fireRate: 350, damage: 53, headshotMult: 4, isAuto: false, maxClip: 7, maxReserve: 35, ammoClip: 7, ammoReserve: 35, reloadTime: 1500, modelColor: 0xcccccc, recoilX: 0.006, recoilY: 0.025 }
+        ];
+
+        let activeWpnIdx = 0;
+        let isReloading = false;
+        let lastFiredTime = 0;
+        let isFiring = false;
+        let isScoped = 0; // 0 = unzoomed, 1 = zoom 1, 2 = zoom 2
+        let keyMap = {};
+
+        // 3D Game Objects / References
+        let perimeterGroup, obstaclesGroup, enemiesGroup, projectileGroup;
+        let weaponModelHolder;
+        let c4Mesh, c4Light;
+        let c4TickInterval = 1000;
+        let lastC4TickTime = 0;
+        let bombTimeRemaining = 45.0;
+        let isGameFinished = false;
+        let killCount = 0;
+
+        // Dynamic Modifiers Setup
+        const MODIFIERS = [
+            { id: 'normal', name: '標準行動 (Standard Ops)', desc: '常規戰術拆彈任務。', hpMult: 1.0, speedMult: 1.0, fireRateMult: 1.0, fog: 0.015, timer: 45, night: false },
+            { id: 'fog', name: '🌫️ 迷霧籠罩 (Dense Fog)', desc: '大霧使能見度急遽降低，小心近距離遭遇突襲！', hpMult: 0.8, speedMult: 1.0, fireRateMult: 1.0, fog: 0.08, timer: 45, night: false },
+            { id: 'night', name: '🌙 夜間突襲 (Night Ops)', desc: '夜間作戰能見度極低！配備高流明「戰術手電筒」尋敵。', hpMult: 1.0, speedMult: 0.8, fireRateMult: 0.9, fog: 0.03, timer: 45, night: true },
+            { id: 'heavy', name: '🛡️ 重灌突圍 (Heavy Armor)', desc: '防守匪軍配備厚重防護服，生命極高但行動緩慢。', hpMult: 2.0, speedMult: 0.6, fireRateMult: 1.2, fog: 0.015, timer: 50, night: false },
+            { id: 'furious', name: '🔥 狂暴火力 (Furious Fire)', desc: '敵人處於高度戒備狂暴狀態，射頻翻倍但生命減半！', hpMult: 0.5, speedMult: 1.2, fireRateMult: 0.5, fog: 0.015, timer: 40, night: false },
+            { id: 'speedrun', name: '⏰ 時限緊迫 (Tactical Speedrun)', desc: 'C4 爆破時限大幅壓縮！必須展開最迅猛的攻勢！', hpMult: 0.8, speedMult: 0.9, fireRateMult: 1.0, fog: 0.015, timer: 30, night: false }
+        ];
+
+        let activeMod = MODIFIERS[0];
+        let activeDiff = 'normal';
+        let flashlight; // SpotLight following player gaze
+        let ambientLight, sunLight; // References to lights to allow dimming
+
+        // --- HTML UI Elements & Listeners ---
+        const playButton = document.getElementById('play-button');
+        const blocker = document.getElementById('blocker');
+        const sensSlider = document.getElementById('sens-slider');
+        const hudHp = document.getElementById('hud-hp');
+        const hudArmor = document.getElementById('hud-armor');
+        const hudTimer = document.getElementById('hud-timer');
+        const hudWeaponName = document.getElementById('hud-weapon-name');
+        const hudAmmoClip = document.getElementById('hud-ammo-clip');
+        const hudAmmoReserve = document.getElementById('hud-ammo-reserve');
+        const reloadPrompt = document.getElementById('reload-prompt');
+        const sniperScope = document.getElementById('sniper-scope');
+        const defuseTip = document.getElementById('defuse-tip');
+        const defuseProgressContainer = document.getElementById('defuse-progress-container');
+        const defuseProgressBar = document.getElementById('defuse-progress-bar');
+        const statusModal = document.getElementById('status-modal');
+        const modalTitle = document.getElementById('modal-title');
+        const modalSubtitle = document.getElementById('modal-subtitle');
+        const modalStatKills = document.getElementById('modal-stat-kills');
+        const modalStatDefused = document.getElementById('modal-stat-defused');
+        const modalStatTime = document.getElementById('modal-stat-time');
+        const damageFlash = document.getElementById('damage-flash');
+        const headshotAlert = document.getElementById('headshot-alert');
+        const killFeed = document.getElementById('kill-feed');
+
+        // Dynamic sensitivity updater
+        sensSlider.addEventListener('input', (e) => {
+            sensitivity = parseFloat(e.target.value) * 0.001;
+        });
+
+        // Pointer Lock Controls initialization
+        playButton.addEventListener('click', () => {
+            applyMissionSettings();
+            spawnEnemies();
+            updateHUD();
+            document.body.requestPointerLock();
+        });
+
+        document.addEventListener('pointerlockchange', () => {
+            if (document.pointerLockElement === document.body) {
+                blocker.style.display = 'none';
+            } else {
+                if (!isGameFinished) {
+                    blocker.style.display = 'flex';
+                }
+            }
+        });
+
+        // --- Mouse rotation input handler ---
+        document.addEventListener('mousemove', (e) => {
+            if (document.pointerLockElement === document.body && player.isAlive && !isGameFinished) {
+                yaw -= e.movementX * sensitivity;
+                pitch -= e.movementY * sensitivity;
+                // Clamp up/down rotation to prevent flipping
+                pitch = Math.max(-Math.PI / 2.2, Math.min(Math.PI / 2.2, pitch));
+            }
+        });
+
+        // Keyboard key tracker
+        window.addEventListener('keydown', (e) => {
+            const code = e.code;
+            keyMap[code] = true;
+
+            if (!player.isAlive || isGameFinished || document.pointerLockElement !== document.body) return;
+
+            // Manual Weapon Swap
+            if (code === 'Digit1') switchWeapon(0);
+            if (code === 'Digit2') switchWeapon(1);
+            if (code === 'Digit3') switchWeapon(2);
+
+            // Manual Reload
+            if (code === 'KeyR' && !isReloading) {
+                reloadWeapon();
+            }
+        });
+
+        window.addEventListener('keyup', (e) => {
+            keyMap[e.code] = false;
+        });
+
+        // Mouse click triggers
+        window.addEventListener('mousedown', (e) => {
+            if (document.pointerLockElement !== document.body || !player.isAlive || isGameFinished) return;
+            
+            if (e.button === 0) { // Left-click: SHOOT
+                isFiring = true;
+                const activeWeapon = weaponsConfig[activeWpnIdx];
+                if (!activeWeapon.isAuto) {
+                    shootWeapon();
+                }
+            } else if (e.button === 2) { // Right-click: ZOOM / SCOPE (Only for sniper)
+                const activeWeapon = weaponsConfig[activeWpnIdx];
+                if (activeWeapon.isSniper) {
+                    isScoped = (isScoped + 1) % 3; // cycle: 0 -> 1 -> 2 -> 0
+                    updateZoom();
+                }
+            }
+        });
+
+        window.addEventListener('mouseup', (e) => {
+            if (e.button === 0) {
+                isFiring = false;
+            }
+        });
+
+        // Prevent right-click context menu in game
+        window.addEventListener('contextmenu', e => e.preventDefault());
+
+
+        // --- Three.js Scene Setup & Initialization ---
+        window.onload = function() {
+            initScene();
+            buildWorld();
+            applyMissionSettings();
+            spawnEnemies();
+            updateHUD();
+            
+            clock = new THREE.Clock();
+            animate();
+        };
+
+        function initScene() {
+            const container = document.getElementById('game-container');
+            
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0xaed8f2); // Crisp sky blue
+            scene.fog = new THREE.FogExp2(0xaed8f2, 0.015);
+
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.rotation.order = "YXZ"; // Standard FPS order
+
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.shadowMap.enabled = true;
+            renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+            container.appendChild(renderer.domElement);
+
+            // Setup light fixtures
+            ambientLight = new THREE.AmbientLight(0xfff7e6, 0.4);
+            scene.add(ambientLight);
+
+            const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444444, 0.4);
+            scene.add(hemiLight);
+
+            sunLight = new THREE.DirectionalLight(0xffeaad, 0.8);
+            sunLight.position.set(30, 60, 20);
+            sunLight.castShadow = true;
+            sunLight.shadow.mapSize.width = 1024;
+            sunLight.shadow.mapSize.height = 1024;
+            sunLight.shadow.camera.near = 0.5;
+            sunLight.shadow.camera.far = 150;
+            const d = 40;
+            sunLight.shadow.camera.left = -d;
+            sunLight.shadow.camera.right = d;
+            sunLight.shadow.camera.top = d;
+            sunLight.shadow.camera.bottom = -d;
+            scene.add(sunLight);
+
+            // Groups for spatial organizations
+            perimeterGroup = new THREE.Group();
+            obstaclesGroup = new THREE.Group();
+            enemiesGroup = new THREE.Group();
+            projectileGroup = new THREE.Group();
+            scene.add(perimeterGroup);
+            scene.add(obstaclesGroup);
+            scene.add(enemiesGroup);
+            scene.add(projectileGroup);
+
+            // Create weapon placeholder attached to camera
+            weaponModelHolder = new THREE.Group();
+            camera.add(weaponModelHolder);
+            scene.add(camera);
+
+            // Position initial gun
+            constructGunModel(weaponsConfig[activeWpnIdx].modelColor);
+
+            window.addEventListener('resize', onWindowResize);
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        // --- Build dust2 Sand / Tactical Layout ---
+        function buildWorld() {
+            // Dusty sand ground
+            const groundGeo = new THREE.PlaneGeometry(80, 80);
+            const groundMat = new THREE.MeshStandardMaterial({ 
+                color: 0xdfc294, // Classic de_dust2 sandy base 
+                roughness: 0.9,
+                metalness: 0.05
+            });
+            const ground = new THREE.Mesh(groundGeo, groundMat);
+            ground.rotation.x = -Math.PI / 2;
+            ground.receiveShadow = true;
+            scene.add(ground);
+
+            // Simple floor grid lines to aid depth perception
+            const gridHelper = new THREE.GridHelper(80, 40, 0x8b7355, 0x9c8262);
+            gridHelper.position.y = 0.01;
+            scene.add(gridHelper);
+
+            // Map Perimeter sandy brick walls
+            const wallMat = new THREE.MeshStandardMaterial({ color: 0xd6b785, roughness: 0.8 });
+            const walls = [
+                { w: 80, h: 10, d: 2, x: 0, y: 5, z: -40 },
+                { w: 80, h: 10, d: 2, x: 0, y: 5, z: 40 },
+                { w: 2, h: 10, d: 80, x: -40, y: 5, z: 0 },
+                { w: 2, h: 10, d: 80, x: 40, y: 5, z: 0 }
+            ];
+
+            walls.forEach(params => {
+                const wallGeo = new THREE.BoxGeometry(params.w, params.h, params.d);
+                const wallMesh = new THREE.Mesh(wallGeo, wallMat);
+                wallMesh.position.set(params.x, params.y, params.z);
+                wallMesh.receiveShadow = true;
+                wallMesh.castShadow = true;
+                perimeterGroup.add(wallMesh);
+            });
+
+            // "A Site" Target Area Spray Logo
+            createSiteLogo();
+
+            // Tactical cover boxes (Crates)
+            const crateMat = new THREE.MeshStandardMaterial({ color: 0x825c38, roughness: 0.95 }); // Brown crates
+            const crates = [
+                // x, y, z, w, h, d, rotationY (degrees)
+                { x: -5, y: 1.5, z: -10, w: 3, h: 3, d: 3, r: 10 },
+                { x: -5, y: 4.5, z: -10, w: 2.5, h: 3, d: 2.5, r: -5 }, // Stacked
+                { x: 10, y: 1.5, z: -15, w: 3, h: 3, d: 3, r: -15 },
+                { x: 14, y: 1.5, z: 2, w: 4, h: 3, d: 3, r: 45 },
+                { x: -12, y: 1.5, z: 8, w: 3, h: 3, d: 3, r: 0 },
+                { x: -12, y: 1.5, z: 12, w: 3, h: 3, d: 3, r: 15 },
+                // Central A platform (C4 target zone)
+                { x: 0, y: 0.5, z: -2, w: 8, h: 1, d: 8, r: 0 }
+            ];
+
+            crates.forEach(c => {
+                const geo = new THREE.BoxGeometry(c.w, c.h, c.d);
+                const mesh = new THREE.Mesh(geo, crateMat);
+                mesh.position.set(c.x, c.y, c.z);
+                mesh.rotation.y = c.r * (Math.PI / 180);
+                mesh.receiveShadow = true;
+                mesh.castShadow = true;
+                obstaclesGroup.add(mesh);
+
+                // Quick visual panel borders on boxes
+                addCrateDetails(mesh, c.w, c.h, c.d);
+            });
+
+            // --- BUILD BOMB MODEL (C4) ---
+            const c4Group = new THREE.Group();
+            c4Group.position.set(0, 1.2, -2); // Center platform
+
+            // Clay body
+            const c4BodyGeo = new THREE.BoxGeometry(0.8, 0.4, 0.5);
+            const c4BodyMat = new THREE.MeshStandardMaterial({ color: 0x4d5d3d, roughness: 0.8 }); // Olive Drab plastic
+            const c4Body = new THREE.Mesh(c4BodyGeo, c4BodyMat);
+            c4Body.castShadow = true;
+            c4Group.add(c4Body);
+
+            // Red electronic timer pack
+            const c4TimerGeo = new THREE.BoxGeometry(0.3, 0.15, 0.42);
+            const c4TimerMat = new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.5 });
+            const c4Timer = new THREE.Mesh(c4TimerGeo, c4TimerMat);
+            c4Timer.position.set(-0.15, 0.15, 0);
+            c4Group.add(c4Timer);
+
+            // Wired elements
+            const wireGeo = new THREE.CylinderGeometry(0.02, 0.02, 0.4);
+            const wireMat = new THREE.MeshStandardMaterial({ color: 0xcc3333 });
+            const wire = new THREE.Mesh(wireGeo, wireMat);
+            wire.rotation.z = Math.PI/2;
+            wire.position.set(0.18, 0.15, 0.1);
+            c4Group.add(wire);
+
+            // Flashing Light indicator
+            const c4LightGeo = new THREE.SphereGeometry(0.05, 8, 8);
+            const c4LightMat = new THREE.MeshBasicMaterial({ color: 0xff0000 });
+            c4Light = new THREE.Mesh(c4LightGeo, c4LightMat);
+            c4Light.position.set(-0.15, 0.23, 0.1);
+            c4Group.add(c4Light);
+
+            scene.add(c4Group);
+            c4Mesh = c4Group; // Save global reference
+        }
+
+        // Draw cross lines on crates for stylistic polish
+        function addCrateDetails(crateMesh, w, h, d) {
+            const lineMat = new THREE.MeshBasicMaterial({ color: 0x5a3e23 });
+            
+            // Front diagonal cross lines
+            const lineGeo1 = new THREE.BoxGeometry(w * 0.95, 0.1, 0.1);
+            const l1 = new THREE.Mesh(lineGeo1, lineMat);
+            l1.rotation.z = Math.atan2(h, w);
+            l1.position.z = d/2 + 0.02;
+            crateMesh.add(l1);
+
+            const l2 = new THREE.Mesh(lineGeo1, lineMat);
+            l2.rotation.z = -Math.atan2(h, w);
+            l2.position.z = d/2 + 0.02;
+            crateMesh.add(l2);
+        }
+
+        // de_dust2 A target decal
+        function createSiteLogo() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 128;
+            canvas.height = 128;
+            const ctx = canvas.getContext('2d');
+            
+            // Transparent background
+            ctx.clearRect(0,0,128,128);
+            // Draw a big bold Red/Black "A" stencil spray
+            ctx.fillStyle = '#cc2222';
+            ctx.font = '900 100px Courier New, sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('A', 64, 64);
+            
+            // Draw stencil circle
+            ctx.strokeStyle = '#cc2222';
+            ctx.lineWidth = 6;
+            ctx.beginPath();
+            ctx.arc(64, 64, 50, 0, 2*Math.PI);
+            ctx.stroke();
+
+            const texture = new THREE.CanvasTexture(canvas);
+            const stencilGeo = new THREE.PlaneGeometry(4, 4);
+            const stencilMat = new THREE.MeshStandardMaterial({ 
+                map: texture, 
+                transparent: true, 
+                polygonOffset: true,
+                polygonOffsetFactor: -1, // Ensures decal floats clearly on wall
+                roughness: 0.9
+            });
+
+            const decal = new THREE.Mesh(stencilGeo, stencilMat);
+            decal.position.set(0, 3, -38.9); // Center on back wall
+            scene.add(decal);
+        }
+
+
+        // --- Weapon Model Generator (Stitch customized 3D shapes) ---
+        function constructGunModel(colorHex) {
+            // Remove previous
+            while (weaponModelHolder.children.length > 0) {
+                weaponModelHolder.remove(weaponModelHolder.children[0]);
+            }
+
+            const modelGroup = new THREE.Group();
+
+            const bodyMat = new THREE.MeshStandardMaterial({ color: colorHex, roughness: 0.5, metalness: 0.8 });
+            const darkMat = new THREE.MeshStandardMaterial({ color: 0x151515, roughness: 0.7 });
+
+            // Weapon barrel / Frame
+            const barrelGeo = new THREE.BoxGeometry(0.12, 0.12, 0.9);
+            const barrel = new THREE.Mesh(barrelGeo, bodyMat);
+            barrel.position.set(0.3, -0.3, -0.8);
+            barrel.castShadow = true;
+            modelGroup.add(barrel);
+
+            // Handle grip
+            const gripGeo = new THREE.BoxGeometry(0.1, 0.28, 0.12);
+            const grip = new THREE.Mesh(gripGeo, darkMat);
+            grip.position.set(0.3, -0.45, -0.55);
+            grip.rotation.x = -0.2;
+            grip.castShadow = true;
+            modelGroup.add(grip);
+
+            // Scope construct (specifically look big on AWP sniper)
+            const activeWpn = weaponsConfig[activeWpnIdx];
+            if (activeWpn.isSniper) {
+                const scopeGeo = new THREE.CylinderGeometry(0.06, 0.06, 0.5);
+                const scopeMesh = new THREE.Mesh(scopeGeo, darkMat);
+                scopeMesh.rotation.x = Math.PI / 2;
+                scopeMesh.position.set(0.3, -0.19, -0.75);
+                modelGroup.add(scopeMesh);
+
+                // Scope mounts
+                const mountGeo = new THREE.BoxGeometry(0.04, 0.08, 0.04);
+                const mount1 = new THREE.Mesh(mountGeo, darkMat);
+                mount1.position.set(0.3, -0.23, -0.9);
+                modelGroup.add(mount1);
+                const mount2 = new THREE.Mesh(mountGeo, darkMat);
+                mount2.position.set(0.3, -0.23, -0.6);
+                modelGroup.add(mount2);
+            }
+
+            weaponModelHolder.add(modelGroup);
+        }
+
+        // --- Apply Mission Difficulty & Modifiers Settings ---
+        function applyMissionSettings() {
+            const diffSel = document.getElementById('difficulty-select').value;
+            const modSel = document.getElementById('modifier-select').value;
+
+            activeDiff = diffSel;
+
+            // Resolve Modifiers (Handle random option)
+            if (modSel === 'random') {
+                const randIdx = Math.floor(Math.random() * (MODIFIERS.length - 1)) + 1; // 隨機抽選 1~5 號突發狀況
+                activeMod = MODIFIERS[randIdx];
+            } else {
+                activeMod = MODIFIERS.find(m => m.id === modSel) || MODIFIERS[0];
+            }
+
+            // Sync Mission Brief UI
+            document.getElementById('hud-modifier-title').innerText = activeMod.name;
+            document.getElementById('hud-modifier-desc').innerText = activeMod.desc;
+
+            // Apply round limit timer
+            bombTimeRemaining = activeMod.timer;
+
+            // Difficulty-based Player attributes scaling
+            if (activeDiff === 'easy') {
+                player.hp = 150;
+                player.armor = 150;
+            } else if (activeDiff === 'normal') {
+                player.hp = 100;
+                player.armor = 100;
+            } else if (activeDiff === 'hard') {
+                player.hp = 100;
+                player.armor = 100;
+            } else if (activeDiff === 'expert') {
+                player.hp = 100;
+                player.armor = 50; // Expert begins with restricted shield
+            }
+
+            // Apply 3D Environmental variables (Fog, Lights, Gaze Flashlight)
+            if (scene) {
+                if (activeMod.night) {
+                    scene.background.setHex(0x05050a);
+                    scene.fog.color.setHex(0x05050a);
+                    scene.fog.density = activeMod.fog;
+                    
+                    if (sunLight) sunLight.intensity = 0.05; // extremely dim moonlight
+                    if (ambientLight) ambientLight.intensity = 0.08;
+
+                    // Setup or activate high power dynamic flashlight
+                    if (!flashlight) {
+                        flashlight = new THREE.SpotLight(0xfffdd0, 8, 35, Math.PI / 5, 0.6, 1);
+                        flashlight.castShadow = true;
+                        flashlight.shadow.mapSize.width = 512;
+                        flashlight.shadow.mapSize.height = 512;
+                        camera.add(flashlight);
+
+                        const targetObj = new THREE.Object3D();
+                        targetObj.position.set(0, 0, -1);
+                        camera.add(targetObj);
+                        flashlight.target = targetObj;
+                    }
+                    flashlight.visible = true;
+                } else {
+                    scene.background.setHex(0xaed8f2); // Day sky blue
+                    scene.fog.color.setHex(0xaed8f2);
+                    scene.fog.density = activeMod.fog;
+
+                    if (sunLight) sunLight.intensity = 0.8;
+                    if (ambientLight) ambientLight.intensity = 0.4;
+
+                    if (flashlight) flashlight.visible = false;
+                }
+            }
+        }
+
+        // --- Tactical AI (Terrorists enemy targets spawning & handling) ---
+        function spawnEnemies() {
+            // Clear prior enemies
+            while(enemiesGroup.children.length > 0) {
+                enemiesGroup.remove(enemiesGroup.children[0]);
+            }
+
+            const enemySpots = [
+                { x: -15, y: 1, z: -18 },
+                { x: 18, y: 1, z: -15 },
+                { x: -28, y: 1, z: -5 },
+                { x: 25, y: 1, z: 8 },
+                { x: 0, y: 1, z: -12 } // Standing on box site guarding
+            ];
+
+            // Setup scaling ratios based on selected difficulty setting
+            let diffHpMult = 1.0;
+            let diffCooldownMult = 1.0;
+
+            if (activeDiff === 'easy') {
+                diffHpMult = 0.7;
+                diffCooldownMult = 1.5; // slow fire intervals
+            } else if (activeDiff === 'normal') {
+                diffHpMult = 1.0;
+                diffCooldownMult = 1.0;
+            } else if (activeDiff === 'hard') {
+                diffHpMult = 1.35;
+                diffCooldownMult = 0.8; // faster fire rate
+            } else if (activeDiff === 'expert') {
+                diffHpMult = 1.6;
+                diffCooldownMult = 0.6; // lightning aggressive response
+            }
+
+            enemySpots.forEach((spot, index) => {
+                const enemyGroup = new THREE.Group();
+                enemyGroup.position.set(spot.x, spot.y, spot.z);
+                enemyGroup.name = "Enemy_" + index;
+
+                // Base stats merged with both Difficulty parameters and Active Modifiers
+                const baseHp = 100 * activeMod.hpMult * diffHpMult;
+                const fireInterval = (1200 + Math.random() * 800) * activeMod.fireRateMult * diffCooldownMult;
+                const patrolSpeed = (0.03 + Math.random() * 0.02) * activeMod.speedMult;
+
+                enemyGroup.userData = {
+                    hp: baseHp,
+                    maxHp: baseHp,
+                    lastShotTime: 0,
+                    fireCooldown: fireInterval,
+                    patrolDir: Math.random() > 0.5 ? 1 : -1,
+                    patrolLimit: 4,
+                    spawnX: spot.x,
+                    speed: patrolSpeed
+                };
+
+                // Head part - Crucial for headshot logic!
+                const headGeo = new THREE.SphereGeometry(0.38, 16, 16);
+                const headMat = new THREE.MeshStandardMaterial({ color: 0x9e3131, roughness: 0.6 }); // Masked red head
+                
+                // Visual modifier cues for enemy bodies
+                if (activeMod.id === 'furious') {
+                    headMat.color.setHex(0xff1111); // angry red glow head
+                    headMat.emissive.setHex(0x660000);
+                } else if (activeMod.id === 'night') {
+                    headMat.color.setHex(0x11111a); // dark camo headmask
+                }
+
+                const head = new THREE.Mesh(headGeo, headMat);
+                head.position.set(0, 1.6, 0);
+                head.castShadow = true;
+                head.name = "head";
+                enemyGroup.add(head);
+
+                // Body torso
+                const bodyGeo = new THREE.CylinderGeometry(0.4, 0.45, 1.1, 16);
+                const bodyMat = new THREE.MeshStandardMaterial({ color: 0xc4af80, roughness: 0.7 }); // Desert camo yellow body
+                
+                // Modifier outfit adjustments
+                if (activeMod.id === 'heavy') {
+                    bodyMat.color.setHex(0x3e403d); // gunmetal color armor plate
+                } else if (activeMod.id === 'night') {
+                    bodyMat.color.setHex(0x1a2536); // tactical midnight dark blue camo
+                } else if (activeMod.id === 'fog') {
+                    bodyMat.color.setHex(0x7c8a99); // grey slate fog camouflage
+                }
+
+                const body = new THREE.Mesh(bodyGeo, bodyMat);
+                body.position.set(0, 0.75, 0);
+                body.castShadow = true;
+                body.receiveShadow = true;
+                body.name = "body";
+                enemyGroup.add(body);
+
+                // Apply geometry scale up for Heavy Armor modifier
+                if (activeMod.id === 'heavy') {
+                    body.scale.set(1.3, 1.0, 1.3); // bulky thick torso
+                    head.scale.set(1.1, 1.1, 1.1);
+                }
+
+                // Enemy block gun
+                const gunGeo = new THREE.BoxGeometry(0.1, 0.1, 0.6);
+                const gunMat = new THREE.MeshStandardMaterial({ color: 0x111111 });
+                const gun = new THREE.Mesh(gunGeo, gunMat);
+                gun.position.set(0.3, 0.85, -0.4);
+                enemyGroup.add(gun);
+
+                enemiesGroup.add(enemyGroup);
+            });
+        }
+
+
+        // --- Game Controls Actions & Guns Mechanics ---
+        function switchWeapon(index) {
+            if (activeWpnIdx === index || isReloading) return;
+            
+            activeWpnIdx = index;
+            isScoped = 0; // reset zoom
+            updateZoom();
+            constructGunModel(weaponsConfig[activeWpnIdx].modelColor);
+            playSound('switch');
+            updateHUD();
+
+            // Highlight bar choice
+            for (let i = 0; i < 3; i++) {
+                const btn = document.getElementById(`wpn-btn-${i+1}`);
+                if (i === index) {
+                    btn.className = "px-4 py-2 rounded text-xs font-bold border transition-all duration-150 text-amber-400 border-amber-500 bg-amber-500/10";
+                } else {
+                    btn.className = "px-4 py-2 rounded text-xs font-bold border transition-all duration-150 text-zinc-400 border-zinc-700 bg-zinc-900/40";
+                }
+            }
+        }
+
+        function updateZoom() {
+            if (isScoped === 1) {
+                camera.fov = 30; // Medium Zoom
+                sniperScope.style.display = 'block';
+            } else if (isScoped === 2) {
+                camera.fov = 10; // Extra Zoom
+                sniperScope.style.display = 'block';
+            } else {
+                camera.fov = 75; // Return normal FOV
+                sniperScope.style.display = 'none';
+            }
+            camera.updateProjectionMatrix();
+        }
+
+        function reloadWeapon() {
+            const wpn = weaponsConfig[activeWpnIdx];
+            if (wpn.ammoClip === wpn.maxClip || wpn.ammoReserve <= 0) return;
+
+            isReloading = true;
+            isFiring = false;
+            reloadPrompt.innerText = "RELOADING...";
+            reloadPrompt.classList.remove('hidden');
+            playSound('reload');
+
+            setTimeout(() => {
+                const needed = wpn.maxClip - wpn.ammoClip;
+                const available = Math.min(needed, wpn.ammoReserve);
+                wpn.ammoClip += available;
+                wpn.ammoReserve -= available;
+                isReloading = false;
+                reloadPrompt.classList.add('hidden');
+                updateHUD();
+            }, wpn.reloadTime);
+        }
+
+        function shootWeapon() {
+            const now = performance.now();
+            const wpn = weaponsConfig[activeWpnIdx];
+
+            if (now - lastFiredTime < wpn.fireRate) return;
+            if (wpn.ammoClip <= 0) {
+                playSound('beep'); // Empty chamber click sound
+                reloadWeapon();
+                return;
+            }
+
+            // Fire execution
+            wpn.ammoClip--;
+            lastFiredTime = now;
+            updateHUD();
+
+            // Sound
+            if (wpn.isSniper) {
+                playSound('awp');
+            } else if (activeWpnIdx === 0) {
+                playSound('ak47');
+            } else {
+                playSound('deagle');
+            }
+
+            // Apply recoil to visual gun model
+            weaponModelHolder.position.z += 0.25;
+            weaponModelHolder.position.y += 0.05;
+
+            // Simple camera screen shake (recoil feedback)
+            pitch += wpn.recoilY;
+            yaw += (Math.random() - 0.5) * wpn.recoilX;
+
+            // Trigger visual muzzle flash
+            createMuzzleFlash();
+
+            // Shoot Raycast calculations
+            raycastShot();
+        }
+
+        function createMuzzleFlash() {
+            const flashLight = new THREE.PointLight(0xffea9e, 3, 10);
+            flashLight.position.set(0.3, -0.3, -1.3);
+            camera.add(flashLight);
+
+            const flashGeo = new THREE.SphereGeometry(0.12, 8, 8);
+            const flashMat = new THREE.MeshBasicMaterial({ color: 0xffea47 });
+            const flashSphere = new THREE.Mesh(flashGeo, flashMat);
+            flashSphere.position.set(0.3, -0.3, -1.3);
+            camera.add(flashSphere);
+
+            setTimeout(() => {
+                camera.remove(flashLight);
+                camera.remove(flashSphere);
+            }, 60);
+        }
+
+        // Raycast hit detection
+        function raycastShot() {
+            const wpn = weaponsConfig[activeWpnIdx];
+            
+            // Build raycaster from dead center of viewport screen
+            const raycaster = new THREE.Raycaster();
+            const centerScreen = new THREE.Vector2(0, 0);
+            raycaster.setFromCamera(centerScreen, camera);
+
+            // Add bullet tracer line
+            const origin = new THREE.Vector3();
+            // Trace origin slightly offset near actual muzzle
+            origin.setFromMatrixPosition(weaponModelHolder.matrixWorld);
+            
+            // Intersects detection
+            // Note: Must traverse nested child meshes inside enemies group
+            const hits = raycaster.intersectObjects(enemiesGroup.children, true);
+            
+            let hitTarget = null;
+            let endPos = new THREE.Vector3();
+            // Max ray distance 100 meters
+            raycaster.ray.at(100, endPos);
+
+            if (hits.length > 0) {
+                hitTarget = hits[0];
+                endPos.copy(hitTarget.point);
+
+                // Analyze what part was hit
+                let hitMesh = hitTarget.object;
+                let enemyGroup = hitMesh.parent;
+                
+                // Safety traversal to root enemy group
+                while (enemyGroup && !enemyGroup.name.startsWith("Enemy_")) {
+                    enemyGroup = enemyGroup.parent;
+                }
+
+                if (enemyGroup && enemyGroup.userData.hp > 0) {
+                    let isHeadshot = (hitMesh.name === "head");
+                    let damage = wpn.damage;
+                    if (isHeadshot) {
+                        damage *= wpn.headshotMult;
+                        triggerHeadshotAlert();
+                    }
+
+                    enemyGroup.userData.hp -= damage;
+                    
+                    // Flash enemy model brief Red as visual damage cue
+                    flashEnemyHit(hitMesh);
+
+                    // Check if dead
+                    if (enemyGroup.userData.hp <= 0) {
+                        handleEnemyDeath(enemyGroup, isHeadshot);
+                    }
+                }
+            }
+
+            // Create visible yellow trajectory line tracer
+            createTracer(origin, endPos);
+        }
+
+        function createTracer(start, end) {
+            const points = [start, end];
+            const geo = new THREE.BufferGeometry().setFromPoints(points);
+            const mat = new THREE.LineBasicMaterial({ 
+                color: activeWpnIdx === 1 ? 0xff3300 : 0xffea33, // red for sniper, amber for others 
+                transparent: true,
+                opacity: 0.8
+            });
+            const line = new THREE.Line(geo, mat);
+            scene.add(line);
+
+            // Quick fade out
+            let op = 0.8;
+            function fade() {
+                op -= 0.15;
+                mat.opacity = op;
+                if (op > 0) {
+                    requestAnimationFrame(fade);
+                } else {
+                    scene.remove(line);
+                    geo.dispose();
+                    mat.dispose();
+                }
+            }
+            fade();
+        }
+
+        function flashEnemyHit(mesh) {
+            const origColor = mesh.material.color.getHex();
+            mesh.material.color.setHex(0xffffff); // highlight white
+            setTimeout(() => {
+                if (mesh && mesh.material) {
+                    mesh.material.color.setHex(origColor);
+                }
+            }, 80);
+        }
+
+        function triggerHeadshotAlert() {
+            headshotAlert.style.opacity = '1';
+            headshotAlert.style.transform = 'translate(-50%, -50%) scale(1.1)';
+            setTimeout(() => {
+                headshotAlert.style.opacity = '0';
+                headshotAlert.style.transform = 'translate(-50%, -50%) scale(0.5)';
+            }, 1000);
+        }
+
+        function handleEnemyDeath(enemy, wasHeadshot) {
+            // Particle explosion on death position
+            createDamageParticles(enemy.position);
+
+            // Remove enemy from calculations
+            enemiesGroup.remove(enemy);
+            killCount++;
+
+            // Create CS classic kill feed notice
+            const weaponName = weaponsConfig[activeWpnIdx].name;
+            const item = document.createElement('div');
+            item.className = "flex items-center space-x-2 bg-black/70 border border-zinc-800 text-xs px-3 py-1.5 rounded shadow-lg animate-slide-in";
+            
+            const headshotSymbol = wasHeadshot ? '💥 💀' : '';
+            item.innerHTML = `
+                <span class="text-blue-400 font-bold">CT</span>
+                <span class="text-zinc-400">🔫 [${weaponName}]</span>
+                <span class="text-red-400 font-bold">Enemy_T</span>
+                <span class="text-amber-500 font-semibold">${headshotSymbol}</span>
+            `;
+
+            killFeed.appendChild(item);
+            setTimeout(() => {
+                item.style.opacity = '0';
+                setTimeout(() => item.remove(), 500);
+            }, 5000);
+
+            // Evaluate Win checks
+            if (enemiesGroup.children.length === 0) {
+                // All cleared -> Show defuse indicator hints
+                defuseTip.classList.remove('hidden');
+            }
+        }
+
+        // Particle fountain for impacts
+        function createDamageParticles(position) {
+            const count = 20;
+            const geo = new THREE.BoxGeometry(0.12, 0.12, 0.12);
+            const mat = new THREE.MeshBasicMaterial({ color: 0x990000 }); // Red blood spatter
+            
+            const particles = [];
+            for (let i = 0; i < count; i++) {
+                const p = new THREE.Mesh(geo, mat);
+                p.position.copy(position);
+                p.position.y += 1.0; // Chest level
+                
+                // Random velocities
+                p.userData = {
+                    vx: (Math.random() - 0.5) * 0.2,
+                    vy: Math.random() * 0.25,
+                    vz: (Math.random() - 0.5) * 0.2,
+                    life: 25 // frame count
+                };
+                
+                scene.add(p);
+                particles.push(p);
+            }
+
+            function updateParticles() {
+                let alive = false;
+                particles.forEach(p => {
+                    if (p.userData.life > 0) {
+                        p.position.x += p.userData.vx;
+                        p.position.y += p.userData.vy;
+                        p.position.z += p.userData.vz;
+                        
+                        p.userData.vy -= 0.012; // Gravity
+                        p.userData.life--;
+                        alive = true;
+                    } else {
+                        scene.remove(p);
+                    }
+                });
+                
+                if (alive) {
+                    requestAnimationFrame(updateParticles);
+                }
+            }
+            updateParticles();
+        }
+
+        // --- C4 Defuse Logic Handling ---
+        function checkBombProximity() {
+            if (enemiesGroup.children.length > 0) return; // Must secure perimeter first!
+
+            const dist = player.position.distanceTo(c4Mesh.position);
+            
+            if (dist < 4.0) {
+                defuseTip.classList.remove('hidden');
+                
+                // If pressing E key
+                if (keyMap['KeyE']) {
+                    if (!player.isDefusing) {
+                        player.isDefusing = true;
+                        defuseProgressContainer.classList.remove('hidden');
+                    }
+                    
+                    player.defuseProgress += 0.02; // Roughly progress increments
+                    if (player.defuseProgress >= 1.0) {
+                        player.defuseProgress = 1.0;
+                        triggerVictory();
+                    }
+                    defuseProgressBar.style.width = `${player.defuseProgress * 100}%`;
+                } else {
+                    resetDefusalProgress();
+                }
+            } else {
+                defuseTip.classList.add('hidden');
+                resetDefusalProgress();
+            }
+        }
+
+        function resetDefusalProgress() {
+            player.isDefusing = false;
+            player.defuseProgress = 0;
+            defuseProgressContainer.classList.add('hidden');
+            defuseProgressBar.style.width = `0%`;
+        }
+
+        // Helper translation mapping for difficulty stats display
+        function getDifficultyChinese(diff) {
+            switch(diff) {
+                case 'easy': return '輕鬆訓練 (Easy Ops)';
+                case 'normal': return '標準對決 (Normal Ops)';
+                case 'hard': return '精準射手 (Hard Ops)';
+                case 'expert': return '極限惡夢 (Expert Ops)';
+                default: return '標準行動';
+            }
+        }
+
+        // --- Game Ending Resolutions (Victory / Loss) ---
+        function triggerVictory() {
+            if (isGameFinished) return;
+            isGameFinished = true;
+            document.exitPointerLock();
+
+            playSound('victory');
+            
+            modalTitle.innerText = "任務完成";
+            modalTitle.className = "text-3xl font-black mb-2 tracking-wide text-green-500";
+            modalSubtitle.innerText = "Counter-Terrorists win!";
+            
+            // Populate stats
+            document.getElementById('modal-stat-diff').innerText = getDifficultyChinese(activeDiff);
+            document.getElementById('modal-stat-modifier').innerText = activeMod.name;
+            modalStatKills.innerText = killCount;
+            modalStatDefused.innerText = "是 (C4 拆除成功)";
+            modalStatTime.innerText = `${bombTimeRemaining.toFixed(2)} 秒`;
+
+            statusModal.classList.remove('hidden');
+        }
+
+        function triggerDefeat(reason) {
+            if (isGameFinished) return;
+            isGameFinished = true;
+            document.exitPointerLock();
+
+            if (reason === "explosion") {
+                playSound('explosion');
+                // Create massive flash overlay
+                damageFlash.style.backgroundColor = "rgba(255, 255, 255, 1.0)";
+                setTimeout(() => {
+                    damageFlash.style.backgroundColor = "rgba(0,0,0,0.85)";
+                }, 200);
+            }
+
+            modalTitle.innerText = "任務失敗";
+            modalTitle.className = "text-3xl font-black mb-2 tracking-wide text-red-500";
+            modalSubtitle.innerText = reason === "explosion" ? "炸彈已引爆！" : "你已在交火中陣亡！";
+            
+            // Populate stats
+            document.getElementById('modal-stat-diff').innerText = getDifficultyChinese(activeDiff);
+            document.getElementById('modal-stat-modifier').innerText = activeMod.name;
+            modalStatKills.innerText = killCount;
+            modalStatDefused.innerText = "否";
+            modalStatTime.innerText = reason === "explosion" ? "0.00 秒" : `${bombTimeRemaining.toFixed(2)} 秒`;
+
+            statusModal.classList.remove('hidden');
+        }
+
+        function restartGame() {
+            // Read UI and refresh dynamic difficulty stats
+            applyMissionSettings();
+
+            // Reset player metrics
+            player.isAlive = true;
+            player.position.set(0, 1.8, 18);
+            camera.position.copy(player.position);
+            yaw = 0;
+            pitch = 0;
+            
+            killCount = 0;
+            c4TickInterval = 1000;
+            isGameFinished = false;
+
+            // Reset weapon reserves
+            weaponsConfig.forEach(wpn => {
+                wpn.ammoClip = wpn.maxClip;
+                wpn.ammoReserve = wpn.maxReserve;
+            });
+
+            statusModal.classList.add('hidden');
+            defuseTip.classList.add('hidden');
+            resetDefusalProgress();
+            damageFlash.style.backgroundColor = "rgba(255,0,0,0)";
+
+            spawnEnemies();
+            updateHUD();
+
+            // Auto trigger mouse lock request again
+            document.body.requestPointerLock();
+        }
+
+        // --- HUD State Sync ---
+        function updateHUD() {
+            hudHp.innerText = Math.max(0, Math.floor(player.hp));
+            hudArmor.innerText = Math.max(0, Math.floor(player.armor));
+            
+            const currentWpn = weaponsConfig[activeWpnIdx];
+            hudWeaponName.innerText = currentWpn.name;
+            hudAmmoClip.innerText = currentWpn.ammoClip;
+            hudAmmoReserve.innerText = currentWpn.ammoReserve;
+
+            // Highlight red text when low ammo
+            if (currentWpn.ammoClip <= currentWpn.maxClip * 0.3) {
+                reloadPrompt.classList.remove('hidden');
+            } else {
+                if (!isReloading) reloadPrompt.classList.add('hidden');
+            }
+        }
+
+
+        // --- Core Physics & Game Loop ---
+        function animate() {
+            requestAnimationFrame(animate);
+
+            const delta = clock.getDelta();
+
+            if (player.isAlive && !isGameFinished) {
+                // 1. Process player WASD Movement
+                handlePlayerMovement(delta);
+
+                // 2. Continuous AK automatic firing handle
+                if (isFiring && weaponsConfig[activeWpnIdx].isAuto) {
+                    shootWeapon();
+                }
+
+                // 3. Gradual gun recoil animation recovery
+                weaponModelHolder.position.z = THREE.MathUtils.lerp(weaponModelHolder.position.z, 0, 0.15);
+                weaponModelHolder.position.y = THREE.MathUtils.lerp(weaponModelHolder.position.y, 0, 0.15);
+
+                // 4. Enemy AI update turns, movements & weapon firing cycles
+                updateEnemyAI(delta);
+
+                // 5. C4 Ticking timer checks
+                handleC4Timing();
+
+                // 6. Proximity to C4 bomb handling
+                checkBombProximity();
+            }
+
+            // Keep 3D Camera synchronized with player eyes position & rotation vectors
+            camera.position.copy(player.position);
+            camera.rotation.set(0, 0, 0); // Flush
+            camera.rotation.y = yaw;
+            camera.rotation.x = pitch;
+
+            renderer.render(scene, camera);
+        }
+
+        // --- 3D 多重高度地表判定機制 ---
+        function getFloorY(x, z) {
+            let highestFloor = 0.0; // 預設地面高度為 y = 0
+            
+            // 定義玩家在 XZ 軸上的 2D 碰撞範圍 (大小為 1x1 的正方形)
+            const pMinX = x - 0.5;
+            const pMaxX = x + 0.5;
+            const pMinZ = z - 0.5;
+            const pMaxZ = z + 0.5;
+            
+            obstaclesGroup.children.forEach(child => {
+                const box = new THREE.Box3().setFromObject(child);
+                
+                // 檢查玩家與該障礙物在 X 與 Z 軸上是否有水平重疊
+                const overlapX = (pMinX < box.max.x) && (pMaxX > box.min.x);
+                const overlapZ = (pMinZ < box.max.z) && (pMaxZ > box.min.z);
+                
+                if (overlapX && overlapZ) {
+                    // 若有水平重疊，且玩家當前的「雙腳高度 (Feet Y)」處於該障礙物頂端上方或略低處時，判定可以站立其上
+                    const feetY = player.position.y - 1.8;
+                    
+                    // box.max.y 即為障礙物的頂部高度。-0.4 的緩衝範圍是用來確保跳躍下落或走近邊緣時能順暢地抓取到表面
+                    if (feetY >= box.max.y - 0.4) {
+                        if (box.max.y > highestFloor) {
+                            highestFloor = box.max.y;
+                        }
+                    }
+                }
+            });
+            
+            return highestFloor;
+        }
+
+        function handlePlayerMovement(delta) {
+            const speed = 7.0; // 走動速度
+            const moveDirection = new THREE.Vector3(0, 0, 0);
+
+            if (keyMap['KeyW']) moveDirection.z -= 1;
+            if (keyMap['KeyS']) moveDirection.z += 1;
+            if (keyMap['KeyA']) moveDirection.x -= 1;
+            if (keyMap['KeyD']) moveDirection.x += 1;
+
+            moveDirection.normalize();
+            
+            // 將移動向量旋轉對齊玩家當前水平視角 (Yaw)
+            moveDirection.applyAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
+
+            // 計算預期移動的下一個位置
+            const displacement = moveDirection.multiplyScalar(speed * delta);
+            const nextPosition = player.position.clone().add(displacement);
+
+            // 邊界限制 check
+            if (Math.abs(nextPosition.x) < 38.5 && Math.abs(nextPosition.z) < 38.5) {
+                // 障礙物 3D 碰撞盒檢測
+                let col = false;
+                
+                const feetY = player.position.y - 1.8;
+                const headY = player.position.y + 0.2;
+                
+                // 動態 3D 玩家碰撞體：只在玩家當前的垂直高度區間進行水平碰撞檢查
+                // feetY + 0.1 可以防止腳底直接磨擦站立的平台頂部而造成卡死
+                const pBox = new THREE.Box3(
+                    new THREE.Vector3(nextPosition.x - 0.5, feetY + 0.1, nextPosition.z - 0.5),
+                    new THREE.Vector3(nextPosition.x + 0.5, headY - 0.1, nextPosition.z + 0.5)
+                );
+
+                for (let child of obstaclesGroup.children) {
+                    const crateBox = new THREE.Box3().setFromObject(child);
+                    if (pBox.intersectsBox(crateBox)) {
+                        col = true;
+                        break;
+                    }
+                }
+
+                if (!col) {
+                    player.position.x = nextPosition.x;
+                    player.position.z = nextPosition.z;
+                }
+            }
+
+            // 3. 重力、降落判定與高空踩空墜落機制
+            const currentFloorY = getFloorY(player.position.x, player.position.z);
+            const targetGroundCameraY = currentFloorY + 1.8; // 目標相機高度為地表高度 + 1.8m 的眼睛高度
+
+            if (player.position.y > targetGroundCameraY || !player.onGround) {
+                // 處於空中、正在跳躍，或從高台上踩空落下
+                player.onGround = false;
+                player.velocity.y -= 22 * delta; // 重力加速度
+                player.position.y += player.velocity.y * delta;
+
+                // 若下落後低於目標地表高度，則判定為安穩降落
+                if (player.position.y <= targetGroundCameraY) {
+                    player.position.y = targetGroundCameraY;
+                    player.onGround = true;
+                    player.velocity.y = 0;
+                }
+            } else {
+                // 在平面或高台頂部上移動
+                player.position.y = targetGroundCameraY;
+                player.onGround = true;
+                player.velocity.y = 0;
+            }
+
+            // 觸發跳躍（必須在地面或平台頂部上才能起跳）
+            if (player.onGround && keyMap['Space']) {
+                player.velocity.y = 8.5; // 彈性起跳速度，提升至 8.5m/s 以便流暢登上所有戰術點位
+                player.onGround = false;
+            }
+        }
+
+        function updateEnemyAI(delta) {
+            const now = performance.now();
+            const pCoord = player.position.clone();
+
+            enemiesGroup.children.forEach(enemy => {
+                const data = enemy.userData;
+
+                // 1. Enemy look towards player model
+                enemy.lookAt(new THREE.Vector3(pCoord.x, enemy.position.y, pCoord.z));
+
+                // 2. Sideways Strafe patrol movement
+                const distToSpawn = enemy.position.x - data.spawnX;
+                if (Math.abs(distToSpawn) > data.patrolLimit) {
+                    data.patrolDir *= -1; // Reverse path direction
+                }
+                enemy.position.x += data.patrolDir * data.speed;
+
+                // 3. Firing cycle triggers
+                const distToPlayer = enemy.position.distanceTo(pCoord);
+                
+                // Only fire within realistic sight distance line (25 meters)
+                if (distToPlayer < 30.0 && (now - data.lastShotTime > data.fireCooldown)) {
+                    data.lastShotTime = now;
+                    enemyShootAtPlayer(enemy);
+                }
+            });
+        }
+
+        function enemyShootAtPlayer(enemy) {
+            // Draw visual red tracer heading player
+            const muzzlePos = enemy.position.clone();
+            muzzlePos.y += 0.85; // Chest Gun level
+            
+            const spread = 0.08; // Enemy inaccuracy margin
+            const targetPos = player.position.clone();
+            targetPos.y += (Math.random() - 0.5) * 0.5 - 0.3; // head-torso variance
+            targetPos.x += (Math.random() - 0.5) * spread;
+            targetPos.z += (Math.random() - 0.5) * spread;
+
+            // Visual tracer line showing projectile heading
+            createTracer(muzzlePos, targetPos);
+
+            // Compute hit chance (slightly less lethal if moving)
+            const randomPick = Math.random();
+            if (randomPick > 0.45) { // 55% average hit rate
+                playSound('hurt');
+                
+                // Damage calculation
+                let damageDealt = 10 + Math.floor(Math.random() * 12);
+                
+                // Increase damage on harder difficulties
+                if (activeDiff === 'hard') damageDealt *= 1.25;
+                if (activeDiff === 'expert') damageDealt *= 1.5;
+
+                // Armor absorp mechanic (CS-like: armor takes 40% of standard punch)
+                if (player.armor > 0) {
+                    player.hp -= damageDealt * 0.6;
+                    player.armor -= damageDealt * 0.4;
+                } else {
+                    player.hp -= damageDealt;
+                }
+
+                updateHUD();
+
+                // Red full overlay warning screen flash
+                damageFlash.style.backgroundColor = "rgba(220, 38, 38, 0.3)";
+                setTimeout(() => {
+                    damageFlash.style.backgroundColor = "rgba(220, 38, 38, 0)";
+                }, 100);
+
+                if (player.hp <= 0) {
+                    player.hp = 0;
+                    player.isAlive = false;
+                    triggerDefeat("killed");
+                }
+            }
+        }
+
+        function handleC4Timing() {
+            const now = performance.now();
+            
+            // Adjust C4 beep cadence frequency based on urgency
+            if (bombTimeRemaining < 10) {
+                c4TickInterval = 250; // Super urgent beeping
+            } else if (bombTimeRemaining < 20) {
+                c4TickInterval = 500;
+            } else {
+                c4TickInterval = 1000;
+            }
+
+            if (now - lastC4TickTime > c4TickInterval) {
+                lastC4TickTime = now;
+                
+                // Pulse beep sound
+                playSound('beep');
+
+                // Visual flash C4 sphere shell
+                c4Light.material.color.setHex(0xffffff);
+                setTimeout(() => {
+                    c4Light.material.color.setHex(0xff0000);
+                }, 80);
+            }
+
+            // Count countdown timers
+            bombTimeRemaining -= clock.getDelta();
+            if (bombTimeRemaining <= 0) {
+                bombTimeRemaining = 0;
+                triggerDefeat("explosion");
+            }
+            hudTimer.innerText = bombTimeRemaining.toFixed(2);
+        }
+    </script>
+</body>
+</html>
