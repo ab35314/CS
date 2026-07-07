@@ -2,12 +2,14 @@
 <html lang="zh-TW">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CS 3D 戰術拆彈模擬器 (CS Tactical Simulator)</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>CS 3D 戰術拆彈模擬器 (CS Tactical Simulator P2P)</title>
     <!-- Tailwind CSS for UI -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Three.js Library -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <!-- PeerJS WebRTC Library for Free P2P Multiplayer -->
+    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
     <style>
         body, html {
             margin: 0;
@@ -16,8 +18,10 @@
             height: 100%;
             overflow: hidden;
             user-select: none;
+            -webkit-user-select: none;
             background-color: #0d0d0c;
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            touch-action: none; /* 防止手機瀏覽器預設滾動 */
         }
         #game-container {
             width: 100%;
@@ -84,30 +88,75 @@
             align-items: center;
             color: #fff;
         }
+        /* 觸控專用防頁面干擾設定 */
+        .touch-none {
+            touch-action: none;
+        }
     </style>
 </head>
 <body>
 
     <!-- UI Overlay for Game Loading & State -->
     <div id="blocker" class="text-center p-6">
-        <div id="start-menu" class="max-w-md bg-zinc-900 border-2 border-amber-500 rounded-lg p-8 shadow-2xl overflow-y-auto max-h-[95vh]">
-            <h1 class="text-4xl font-extrabold text-amber-500 mb-2 tracking-widest uppercase">CS 3D TACTICAL</h1>
-            <p class="text-zinc-400 text-sm mb-4">反恐精英：3D戰術拆彈模擬器</p>
+        <div id="start-menu" class="max-w-md bg-zinc-900 border-2 border-amber-500 rounded-lg p-8 shadow-2xl overflow-y-auto max-h-[95vh] space-y-4">
+            <div>
+                <h1 class="text-4xl font-extrabold text-amber-500 mb-1 tracking-widest uppercase">CS 3D TACTICAL</h1>
+                <p class="text-zinc-400 text-xs uppercase tracking-wide">P2P 多人戰術拆彈對戰版</p>
+            </div>
             
-            <div class="bg-zinc-800 p-4 rounded text-left text-xs text-zinc-300 space-y-2 mb-4 border border-zinc-700">
-                <p class="text-amber-400 font-bold text-center text-sm mb-1">【任務簡報 - 拆除 A 點 C4】</p>
-                <p>1. 佔領爆破點：擊殺所有把守爆破 A 區的恐怖份子。</p>
-                <p>2. 拆除 C4：靠近中央閃爍紅光的 C4，並<span class="text-amber-400 font-bold">按住 [E] 鍵 5 秒</span>進行拆彈。</p>
-                <p>3. 限時挑戰：必須在時間結束前完成拆彈，否則 C4 爆炸！</p>
+            <div class="bg-zinc-800 p-3.5 rounded text-left text-xs text-zinc-300 space-y-1.5 border border-zinc-700">
+                <p class="text-amber-400 font-bold text-center text-sm mb-1">【戰術任務簡報】</p>
+                <p>1. <span class="text-blue-400 font-bold">反恐精英 (CT/房長)</span>：消滅恐怖份子，或靠近爆破點按 [E] 鍵（或手機拆彈鍵）5 秒進行拆彈。</p>
+                <p>2. <span class="text-red-400 font-bold">恐怖份子 (T/連線者)</span>：阻止 CT 拆除 C4，在時間結束前守護炸彈爆破點！</p>
+                <p>3. 難度調度在單人對戰 AI 時生效；多人連線時 AI 機器人將自動被玩家取代。</p>
             </div>
 
             <!-- Tactical Settings Selection Panel -->
-            <div class="bg-zinc-950 p-4 rounded border border-zinc-800 space-y-4 mb-4">
-                <p class="text-zinc-400 font-bold text-center text-xs tracking-wider uppercase">⚙️ 戰術任務配置</p>
+            <div class="bg-zinc-950 p-4 rounded border border-zinc-800 space-y-3 text-xs">
+                <p class="text-zinc-400 font-bold text-center tracking-wider uppercase">⚙️ 戰術與連線配置</p>
                 
-                <!-- Difficulty dropdown -->
+                <!-- Game Mode Selection (Solo or Multiplayer) -->
                 <div class="text-left">
-                    <label class="text-[10px] text-zinc-500 font-bold block mb-1 uppercase tracking-wider">任務難度分級 (Difficulty)</label>
+                    <label class="text-[10px] text-zinc-500 font-bold block mb-1 uppercase tracking-wider">選擇戰役模式 (Game Mode)</label>
+                    <select id="game-mode-select" class="w-full bg-zinc-800 text-zinc-200 border border-zinc-700 rounded px-2.5 py-1.5 text-xs focus:outline-none focus:border-amber-500">
+                        <option value="solo" selected>🤖 單人離線模擬戰 (Solo vs AI)</option>
+                        <option value="multi">⚔️ 多人點對點連線對決 (P2P 1v1)</option>
+                    </select>
+                </div>
+
+                <!-- P2P Multiplayer Sub-panel -->
+                <div id="p2p-panel" class="hidden bg-zinc-900/60 p-3 rounded border border-zinc-800/80 space-y-2.5">
+                    <p class="text-amber-500 font-bold text-center text-[10px] tracking-wider uppercase">P2P 連線通道 (WebRTC)</p>
+                    <div class="space-y-1 text-left">
+                        <div class="flex items-center justify-between">
+                            <span class="text-[10px] text-zinc-400">您的連線房號 (Room ID):</span>
+                            <button type="button" id="copy-id-btn" class="bg-zinc-800 hover:bg-zinc-700 text-[9px] text-amber-500 px-1.5 py-0.5 rounded font-bold uppercase transition-colors">複製 ID</button>
+                        </div>
+                        <div id="my-peer-id" class="bg-zinc-950 border border-zinc-800 px-2 py-1.5 rounded text-zinc-300 font-mono text-[10px] truncate select-all">載入中...</div>
+                    </div>
+                    <div class="space-y-1 text-left">
+                        <label class="text-[10px] text-zinc-400">輸入對手的連線房號 (Room ID):</label>
+                        <div class="flex space-x-1.5">
+                            <input type="text" id="join-peer-id" placeholder="貼上對手的房號..." class="flex-1 bg-zinc-950 border border-zinc-800 rounded px-2 py-1 text-xs text-zinc-200 font-mono focus:outline-none focus:border-amber-500">
+                            <button type="button" id="connect-btn" class="bg-amber-500 hover:bg-amber-600 text-zinc-950 font-bold px-3 py-1 rounded text-xs uppercase transition-colors">連線對決</button>
+                        </div>
+                    </div>
+                    <div id="p2p-status" class="text-[10px] text-zinc-400 font-bold uppercase tracking-wider text-center mt-1">連線狀態: 未初始化</div>
+                </div>
+
+                <!-- Controls selection (Touch/Keyboard) -->
+                <div class="text-left">
+                    <label class="text-[10px] text-zinc-500 font-bold block mb-1 uppercase tracking-wider">控制介面選項 (Controls)</label>
+                    <select id="controls-select" class="w-full bg-zinc-800 text-zinc-200 border border-zinc-700 rounded px-2.5 py-1.5 text-xs focus:outline-none focus:border-amber-500">
+                        <option value="auto" selected>💻 智能偵測 (Auto Detect Device)</option>
+                        <option value="keyboard">⌨️ 鍵盤滑鼠優先 (Desktop Controls)</option>
+                        <option value="touch">📱 手機虛擬按鍵 (Force Mobile Touch HUD)</option>
+                    </select>
+                </div>
+
+                <!-- Difficulty dropdown (Solo Only) -->
+                <div id="difficulty-div" class="text-left">
+                    <label class="text-[10px] text-zinc-500 font-bold block mb-1 uppercase tracking-wider">AI 任務難度分級 (Difficulty)</label>
                     <select id="difficulty-select" class="w-full bg-zinc-800 text-zinc-200 border border-zinc-700 rounded px-2.5 py-1.5 text-xs focus:outline-none focus:border-amber-500">
                         <option value="easy">輕鬆模式 (Easy Ops) - 適合新手練習</option>
                         <option value="normal" selected>標準行動 (Normal Ops) - 經典平衡對決</option>
@@ -132,7 +181,7 @@
 
                 <!-- Settings Slider -->
                 <div class="text-left">
-                    <label class="text-[10px] text-zinc-500 font-bold block mb-1 uppercase tracking-wider">滑鼠靈敏度 (Sensitivity)</label>
+                    <label class="text-[10px] text-zinc-500 font-bold block mb-1 uppercase tracking-wider">滑鼠/觸控靈敏度 (Sensitivity)</label>
                     <input type="range" id="sens-slider" min="0.5" max="4.0" step="0.1" value="1.8" class="w-full accent-amber-500">
                 </div>
             </div>
@@ -140,12 +189,56 @@
             <button id="play-button" class="w-full bg-amber-500 hover:bg-amber-600 text-zinc-950 font-bold text-lg py-3 px-6 rounded uppercase transition-colors duration-200 shadow-md transform hover:scale-105">
                 部署並開始
             </button>
-            <p class="text-[10px] text-zinc-500 mt-3">注意：進入遊戲後點擊畫面會鎖定滑鼠。按 ESC 鍵可解鎖滑鼠。</p>
+            <p class="text-[10px] text-zinc-500 mt-2">進入遊戲後將請求鎖定滑鼠。多人對戰時可以隨時按部署直接進行演練。</p>
         </div>
     </div>
 
     <!-- Active Game Screen Container -->
     <div id="game-container"></div>
+
+    <!-- Mobile Virtual Joystick & Touch Buttons Overlay -->
+    <div id="mobile-touch-hud" class="hidden absolute inset-0 pointer-events-none z-15 select-none touch-none">
+        <!-- Bottom Left: Virtual Joystick Container -->
+        <div class="absolute bottom-6 left-6 w-36 h-36 flex items-center justify-center pointer-events-auto">
+            <div id="joystick-base" class="w-28 h-28 bg-black/40 rounded-full border-2 border-white/20 flex items-center justify-center relative touch-none">
+                <div id="joystick-handle" class="w-12 h-12 bg-white/40 border border-white/60 rounded-full pointer-events-none absolute"></div>
+            </div>
+        </div>
+
+        <!-- Bottom Right: Action Buttons -->
+        <div class="absolute bottom-6 right-6 flex flex-col items-end space-y-4 pointer-events-auto">
+            <!-- Secondary Buttons Row: Reload, Scope, and Jump -->
+            <div class="flex items-center space-x-3">
+                <!-- Reload Button -->
+                <button id="btn-reload" class="touch-control-button w-12 h-12 rounded-full bg-zinc-800/60 active:bg-zinc-700/80 border border-zinc-600/30 flex flex-col items-center justify-center text-white select-none">
+                    <span class="text-[9px] font-bold">RELOAD</span>
+                    <span class="text-[7px] text-zinc-400">R</span>
+                </button>
+                <!-- Scope Button -->
+                <button id="btn-scope" class="touch-control-button hidden w-12 h-12 rounded-full bg-green-800/60 active:bg-green-700/80 border border-green-600/30 flex flex-col items-center justify-center text-white select-none">
+                    <span class="text-[9px] font-bold">SCOPE</span>
+                    <span class="text-[7px] text-zinc-300">開鏡</span>
+                </button>
+                <!-- Jump Button -->
+                <button id="btn-jump" class="touch-control-button w-14 h-14 rounded-full bg-zinc-700/60 active:bg-zinc-600/80 border border-zinc-600/30 flex flex-col items-center justify-center text-white select-none">
+                    <span class="text-xs font-black">JUMP</span>
+                    <span class="text-[7px] text-zinc-300">跳躍</span>
+                </button>
+            </div>
+
+            <!-- Primary Button: Giant Shooting Trigger -->
+            <button id="btn-shoot" class="touch-control-button w-20 h-20 rounded-full bg-red-600/60 active:bg-red-500/80 border-2 border-red-500/30 flex flex-col items-center justify-center text-white select-none shadow-[0_0_15px_rgba(239,68,68,0.4)]">
+                <span class="text-sm font-black tracking-widest">FIRE</span>
+                <span class="text-[9px] text-red-200">開火</span>
+            </button>
+        </div>
+
+        <!-- Middle Center: Mobile Holding Defuse Button -->
+        <button id="btn-defuse" class="touch-control-button hidden absolute bottom-1/3 left-1/2 transform -translate-x-1/2 w-20 h-20 rounded-full bg-amber-500/80 active:bg-amber-600/90 border-2 border-amber-400 flex flex-col items-center justify-center text-zinc-950 font-black animate-pulse select-none">
+            <span class="text-xs">DEFUSE</span>
+            <span class="text-[9px]">按住拆彈</span>
+        </button>
+    </div>
 
     <!-- CSS Fullscreen Damage Flash -->
     <div id="damage-flash"></div>
@@ -161,18 +254,15 @@
     <div id="headshot-alert" class="absolute top-1/4 left-1/2 transform -translate-x-1/2 -translate-y-1/2 pointer-events-none opacity-0 scale-50 transition-all duration-300 z-30 flex flex-col items-center">
         <span class="text-amber-500 text-6xl drop-shadow-[0_4px_6px_rgba(0,0,0,0.8)] font-black italic tracking-wider">HEADSHOT!</span>
         <svg class="w-16 h-16 text-amber-500 mt-2 filter drop-shadow-md" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <!-- Simplified skull SVG -->
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
         </svg>
     </div>
 
     <!-- Kill Feed Tracker (Top-Right) -->
-    <div id="kill-feed" class="absolute top-4 right-4 z-10 flex flex-col items-end space-y-2 pointer-events-none">
-        <!-- Dynmically populated kill alerts -->
-    </div>
+    <div id="kill-feed" class="absolute top-4 right-4 z-10 flex flex-col items-end space-y-2 pointer-events-none"></div>
 
     <!-- Interactive Buy / Selection bar at bottom -->
-    <div id="weapons-bar" class="absolute bottom-16 left-1/2 transform -translate-x-1/2 z-10 flex space-x-2 bg-black/60 backdrop-blur-sm p-1.5 rounded-lg border border-zinc-800">
+    <div id="weapons-bar" class="absolute bottom-16 left-1/2 transform -translate-x-1/2 z-10 flex space-x-2 bg-black/60 backdrop-blur-sm p-1.5 rounded-lg border border-zinc-800 pointer-events-auto">
         <button id="wpn-btn-1" onclick="switchWeapon(0)" class="px-4 py-2 rounded text-xs font-bold border transition-all duration-150 text-amber-400 border-amber-500 bg-amber-500/10">
             [1] AK-47
         </button>
@@ -184,7 +274,7 @@
         </button>
     </div>
 
-    <!-- Tactical CS HUD HUD Overlay -->
+    <!-- Tactical CS HUD Overlay -->
     <div class="absolute bottom-4 left-4 z-10 flex items-center space-x-6 text-white bg-black/50 backdrop-blur-sm px-6 py-3 rounded-md border border-zinc-800 pointer-events-none">
         <!-- HP -->
         <div class="flex items-center space-x-2">
@@ -198,7 +288,7 @@
         </div>
     </div>
 
-    <!-- Timer and C4 Alert Indicator (Top Center) -->
+    <!-- Timer and C4 Alert Indicator -->
     <div class="absolute top-4 left-1/2 transform -translate-x-1/2 z-10 flex flex-col items-center pointer-events-none">
         <div class="bg-black/60 backdrop-blur-sm border border-zinc-800 px-6 py-2 rounded-md flex items-center space-x-4">
             <div class="flex flex-col items-center">
@@ -215,7 +305,7 @@
         </div>
     </div>
 
-    <!-- HUD Mission Modifier status display under round timer -->
+    <!-- HUD Mission Modifier status display -->
     <div class="absolute top-20 left-1/2 transform -translate-x-1/2 z-10 text-center pointer-events-none">
         <div class="bg-black/75 backdrop-blur-sm border border-zinc-800/80 px-4 py-1.5 rounded-md flex flex-col items-center max-w-xs">
             <span id="hud-modifier-title" class="text-xs font-black text-amber-500 tracking-wider">隨機戰術部署中...</span>
@@ -223,7 +313,7 @@
         </div>
     </div>
 
-    <!-- Gun Ammo Status HUD (Bottom Right) -->
+    <!-- Gun Ammo Status HUD -->
     <div class="absolute bottom-4 right-4 z-10 flex flex-col items-end pointer-events-none">
         <div class="bg-black/50 backdrop-blur-sm px-6 py-3 rounded-md border border-zinc-800 flex items-center space-x-4">
             <div class="text-right">
@@ -238,9 +328,8 @@
         <span id="reload-prompt" class="hidden text-xs font-bold text-red-400 mt-2 animate-pulse">按 R 鍵重新裝彈！</span>
     </div>
 
-    <!-- Circular Interactive crosshair in dead center -->
+    <!-- Crosshair -->
     <div id="crosshair" class="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 pointer-events-none z-10">
-        <!-- Static thin crosshair -->
         <div class="relative w-6 h-6 flex items-center justify-center">
             <div class="absolute w-1.5 h-1.5 bg-green-400 rounded-full"></div>
             <div class="absolute w-4 h-0.5 bg-green-400 left-0"></div>
@@ -267,7 +356,7 @@
             <div class="bg-zinc-800 p-4 rounded text-xs text-zinc-300 space-y-2 mb-6 text-left border border-zinc-700">
                 <p>任務難度：<span id="modal-stat-diff" class="font-bold text-amber-400">標準</span></p>
                 <p>突發狀況：<span id="modal-stat-modifier" class="font-bold text-amber-500">無</span></p>
-                <p>擊殺恐怖份子數：<span id="modal-stat-kills" class="font-bold text-amber-400">0</span></p>
+                <p>擊殺對手次數：<span id="modal-stat-kills" class="font-bold text-amber-400">0</span></p>
                 <p>是否成功拆彈：<span id="modal-stat-defused" class="font-bold text-amber-400">是</span></p>
                 <p>賸餘戰略時間：<span id="modal-stat-time" class="font-bold text-amber-400">20.40 秒</span></p>
             </div>
@@ -278,9 +367,9 @@
         </div>
     </div>
 
-    <!-- Mobile HUD Fallback Warning / controls -->
-    <div class="lg:hidden absolute bottom-24 left-2 right-2 bg-black/80 border border-zinc-800 p-2 rounded text-[10px] text-zinc-400 text-center pointer-events-none z-10">
-        📌 偵測到移動設備。本 FPS 模擬器強烈推薦在電腦上使用【鍵盤 & 滑鼠】獲得最佳戰術對決體驗！
+    <!-- Mobile HUD Fallback Warning -->
+    <div id="mobile-warning" class="lg:hidden absolute bottom-24 left-2 right-2 bg-black/80 border border-zinc-800 p-2 rounded text-[10px] text-zinc-400 text-center pointer-events-none z-10">
+        📌 本 FPS 模擬器已完整支援行動端！可於選單中開啟「手機虛擬按鍵」獲得最佳掌上射擊拆彈體驗！
     </div>
 
     <script>
@@ -295,7 +384,6 @@
             const time = audioCtx.currentTime;
 
             if (type === 'ak47') {
-                // Punchy, metallic explosion sound
                 const bufferSize = audioCtx.sampleRate * 0.25;
                 const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
                 const data = buffer.getChannelData(0);
@@ -319,7 +407,6 @@
                 gain.connect(audioCtx.destination);
                 noise.start();
 
-                // High metallic ring
                 const osc = audioCtx.createOscillator();
                 const oscGain = audioCtx.createGain();
                 osc.type = 'triangle';
@@ -332,7 +419,6 @@
                 osc.stop(time + 0.1);
 
             } else if (type === 'awp') {
-                // Heavy explosion with long reverberation decay
                 const bufferSize = audioCtx.sampleRate * 0.8;
                 const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
                 const data = buffer.getChannelData(0);
@@ -356,7 +442,6 @@
                 gain.connect(audioCtx.destination);
                 noise.start();
 
-                // Low thumping tone
                 const subOsc = audioCtx.createOscillator();
                 const subGain = audioCtx.createGain();
                 subOsc.type = 'sawtooth';
@@ -370,7 +455,6 @@
                 subOsc.stop(time + 0.5);
 
             } else if (type === 'deagle') {
-                // Dry punchy sound
                 const bufferSize = audioCtx.sampleRate * 0.3;
                 const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
                 const data = buffer.getChannelData(0);
@@ -395,7 +479,6 @@
                 noise.start();
 
             } else if (type === 'reload') {
-                // Double mechanical clicks
                 const click1 = audioCtx.createOscillator();
                 const click1Gain = audioCtx.createGain();
                 click1.type = 'triangle';
@@ -419,7 +502,6 @@
                 click2.stop(time + 0.45);
 
             } else if (type === 'switch') {
-                // Quick slick rustle
                 const osc = audioCtx.createOscillator();
                 const gain = audioCtx.createGain();
                 osc.type = 'triangle';
@@ -433,7 +515,6 @@
                 osc.stop(time + 0.1);
 
             } else if (type === 'beep') {
-                // Sharp warning tone
                 const osc = audioCtx.createOscillator();
                 const gain = audioCtx.createGain();
                 osc.type = 'sine';
@@ -446,7 +527,6 @@
                 osc.stop(time + 0.15);
 
             } else if (type === 'hurt') {
-                // Low physical thud
                 const osc = audioCtx.createOscillator();
                 const gain = audioCtx.createGain();
                 osc.type = 'triangle';
@@ -460,8 +540,7 @@
                 osc.stop(time + 0.15);
 
             } else if (type === 'victory') {
-                // Upbeat CT victory motif
-                const notes = [329.63, 392.00, 523.25, 659.25, 783.99]; // E4, G4, C5, E5, G5
+                const notes = [329.63, 392.00, 523.25, 659.25, 783.99]; 
                 notes.forEach((freq, idx) => {
                     const osc = audioCtx.createOscillator();
                     const gain = audioCtx.createGain();
@@ -476,7 +555,6 @@
                 });
 
             } else if (type === 'explosion') {
-                // Massive low rumble
                 const bufferSize = audioCtx.sampleRate * 2.5;
                 const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
                 const data = buffer.getChannelData(0);
@@ -528,7 +606,7 @@
         let isReloading = false;
         let lastFiredTime = 0;
         let isFiring = false;
-        let isScoped = 0; // 0 = unzoomed, 1 = zoom 1, 2 = zoom 2
+        let isScoped = 0; 
         let keyMap = {};
 
         // 3D Game Objects / References
@@ -553,8 +631,29 @@
 
         let activeMod = MODIFIERS[0];
         let activeDiff = 'normal';
-        let flashlight; // SpotLight following player gaze
-        let ambientLight, sunLight; // References to lights to allow dimming
+        let flashlight; 
+        let ambientLight, sunLight; 
+
+        // --- 手機端虛擬操控變數 ---
+        const isTouchDevice = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
+        let joystickActive = false;
+        let joystickStart = { x: 0, y: 0 };
+        let joystickVector = { x: 0, y: 0 }; 
+
+        let lookTouchId = null; 
+        let prevLookX = 0;
+        let prevLookY = 0;
+        let touchDefusing = false; 
+
+        // --- P2P 多人連線變數 ---
+        let peer = null;
+        let p2pConn = null;
+        let isMultiplayer = false;
+        let isHost = true; // 預設為 Host (房長是 CT 拆彈，Client 連線者是 T 守彈)
+        let opponentMesh = null;
+        let isP2PConnected = false;
+        let lastBroadcastTime = 0;
+        const BROADCAST_INTERVAL = 1000 / 30; // 30Hz
 
         // --- HTML UI Elements & Listeners ---
         const playButton = document.getElementById('play-button');
@@ -581,20 +680,78 @@
         const headshotAlert = document.getElementById('headshot-alert');
         const killFeed = document.getElementById('kill-feed');
 
+        // 手機虛擬控制介面
+        const mobileTouchHud = document.getElementById('mobile-touch-hud');
+        const joystickBase = document.getElementById('joystick-base');
+        const joystickHandle = document.getElementById('joystick-handle');
+        const btnShoot = document.getElementById('btn-shoot');
+        const btnScope = document.getElementById('btn-scope');
+        const btnJump = document.getElementById('btn-jump');
+        const btnReload = document.getElementById('btn-reload');
+        const btnDefuse = document.getElementById('btn-defuse');
+        const mobileWarning = document.getElementById('mobile-warning');
+
         // Dynamic sensitivity updater
         sensSlider.addEventListener('input', (e) => {
             sensitivity = parseFloat(e.target.value) * 0.001;
         });
 
+        // 監聽模式切換
+        document.getElementById('game-mode-select').addEventListener('change', (e) => {
+            const mode = e.target.value;
+            const p2pPanel = document.getElementById('p2p-panel');
+            const difficultyDiv = document.getElementById('difficulty-div');
+            if (mode === 'multi') {
+                p2pPanel.classList.remove('hidden');
+                difficultyDiv.classList.add('hidden');
+                isMultiplayer = true;
+                initPeerJS(); // 即刻初始化 Peer 服務
+            } else {
+                p2pPanel.classList.add('hidden');
+                difficultyDiv.classList.remove('hidden');
+                isMultiplayer = false;
+            }
+        });
+
         // Pointer Lock Controls initialization
         playButton.addEventListener('click', () => {
             applyMissionSettings();
+            
+            // 根據多人連線分配初始出生地
+            if (isMultiplayer) {
+                if (isHost) {
+                    player.position.set(0, 1.8, 18); // CT 守家
+                } else {
+                    player.position.set(0, 1.8, -10); // T 護 C4 點
+                }
+                camera.position.copy(player.position);
+            }
+
             spawnEnemies();
             updateHUD();
-            document.body.requestPointerLock();
+
+            const ctrlMode = document.getElementById('controls-select').value;
+            const useTouch = (ctrlMode === 'touch') || (ctrlMode === 'auto' && isTouchDevice);
+
+            if (useTouch) {
+                mobileTouchHud.style.display = 'block';
+                mobileWarning.style.display = 'none';
+                blocker.style.display = 'none'; 
+            } else {
+                mobileTouchHud.style.display = 'none';
+                document.body.requestPointerLock();
+            }
         });
 
         document.addEventListener('pointerlockchange', () => {
+            const ctrlMode = document.getElementById('controls-select').value;
+            const useTouch = (ctrlMode === 'touch') || (ctrlMode === 'auto' && isTouchDevice);
+            
+            if (useTouch) {
+                blocker.style.display = 'none';
+                return;
+            }
+
             if (document.pointerLockElement === document.body) {
                 blocker.style.display = 'none';
             } else {
@@ -609,7 +766,6 @@
             if (document.pointerLockElement === document.body && player.isAlive && !isGameFinished) {
                 yaw -= e.movementX * sensitivity;
                 pitch -= e.movementY * sensitivity;
-                // Clamp up/down rotation to prevent flipping
                 pitch = Math.max(-Math.PI / 2.2, Math.min(Math.PI / 2.2, pitch));
             }
         });
@@ -649,7 +805,7 @@
             } else if (e.button === 2) { // Right-click: ZOOM / SCOPE (Only for sniper)
                 const activeWeapon = weaponsConfig[activeWpnIdx];
                 if (activeWeapon.isSniper) {
-                    isScoped = (isScoped + 1) % 3; // cycle: 0 -> 1 -> 2 -> 0
+                    isScoped = (isScoped + 1) % 3; 
                     updateZoom();
                 }
             }
@@ -661,8 +817,376 @@
             }
         });
 
-        // Prevent right-click context menu in game
+        // Prevent right-click context menu
         window.addEventListener('contextmenu', e => e.preventDefault());
+
+
+        // --- 手機多點觸控平滑轉向、搖桿與按鍵事件處理 ---
+        
+        // 1. 左側虛擬搖桿邏輯
+        joystickBase.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            const touch = e.touches[0];
+            const rect = joystickBase.getBoundingClientRect();
+            joystickStart = {
+                x: rect.left + rect.width / 2,
+                y: rect.top + rect.height / 2
+            };
+            joystickActive = true;
+            updateJoystick(touch);
+        }, { passive: false });
+
+        joystickBase.addEventListener('touchmove', (e) => {
+            e.preventDefault();
+            if (!joystickActive) return;
+            const touch = Array.from(e.touches).find(t => t.target === joystickBase || joystickBase.contains(t.target)) || e.touches[0];
+            updateJoystick(touch);
+        }, { passive: false });
+
+        function updateJoystick(touch) {
+            const dx = touch.clientX - joystickStart.x;
+            const dy = touch.clientY - joystickStart.y;
+            const dist = Math.sqrt(dx*dx + dy*dy);
+            const maxDist = 50; 
+
+            let moveX = dx;
+            let moveY = dy;
+            if (dist > maxDist) {
+                moveX = (dx / dist) * maxDist;
+                moveY = (dy / dist) * maxDist;
+            }
+
+            joystickHandle.style.transform = `translate(${moveX}px, ${moveY}px)`;
+
+            joystickVector.x = moveX / maxDist;
+            joystickVector.y = moveY / maxDist;
+        }
+
+        joystickBase.addEventListener('touchend', (e) => {
+            joystickActive = false;
+            joystickVector = { x: 0, y: 0 };
+            joystickHandle.style.transform = 'translate(0px, 0px)';
+        });
+
+        // 2. 右側划動控制視角 (Trackpad)
+        window.addEventListener('touchstart', (e) => {
+            if (!player.isAlive || isGameFinished) return;
+
+            for (let i = 0; i < e.changedTouches.length; i++) {
+                const touch = e.changedTouches[i];
+                let onControl = false;
+                let el = touch.target;
+                
+                while (el) {
+                    if (el.classList && (el.classList.contains('touch-control-button') || el.id === 'joystick-base' || el.id === 'weapons-bar')) {
+                        onControl = true;
+                        break;
+                    }
+                    el = el.parentElement;
+                }
+
+                if (!onControl && lookTouchId === null) {
+                    lookTouchId = touch.identifier;
+                    prevLookX = touch.clientX;
+                    prevLookY = touch.clientY;
+                }
+            }
+        });
+
+        window.addEventListener('touchmove', (e) => {
+            if (!player.isAlive || isGameFinished || lookTouchId === null) return;
+
+            for (let i = 0; i < e.touches.length; i++) {
+                const touch = e.touches[i];
+                if (touch.identifier === lookTouchId) {
+                    const deltaX = touch.clientX - prevLookX;
+                    const deltaY = touch.clientY - prevLookY;
+
+                    const mobileLookSens = sensitivity * 0.45;
+                    yaw -= deltaX * mobileLookSens;
+                    pitch -= deltaY * mobileLookSens;
+                    pitch = Math.max(-Math.PI / 2.2, Math.min(Math.PI / 2.2, pitch));
+
+                    prevLookX = touch.clientX;
+                    prevLookY = touch.clientY;
+                    break;
+                }
+            }
+        }, { passive: true });
+
+        window.addEventListener('touchend', (e) => {
+            for (let i = 0; i < e.changedTouches.length; i++) {
+                if (e.changedTouches[i].identifier === lookTouchId) {
+                    lookTouchId = null;
+                    break;
+                }
+            }
+        });
+
+        // 3. 手機虛擬功能鍵綁定
+        btnShoot.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            isFiring = true;
+            const activeWeapon = weaponsConfig[activeWpnIdx];
+            if (!activeWeapon.isAuto) {
+                shootWeapon();
+            }
+        }, { passive: false });
+
+        btnShoot.addEventListener('touchend', (e) => {
+            e.preventDefault();
+            isFiring = false;
+        }, { passive: false });
+
+        btnScope.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            const activeWeapon = weaponsConfig[activeWpnIdx];
+            if (activeWeapon.isSniper) {
+                isScoped = (isScoped + 1) % 3;
+                updateZoom();
+            }
+        }, { passive: false });
+
+        btnJump.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            if (player.onGround) {
+                player.velocity.y = 8.5; 
+                player.onGround = false;
+            }
+        }, { passive: false });
+
+        btnReload.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            if (!isReloading) {
+                reloadWeapon();
+            }
+        }, { passive: false });
+
+        btnDefuse.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            touchDefusing = true;
+        }, { passive: false });
+
+        btnDefuse.addEventListener('touchend', (e) => {
+            e.preventDefault();
+            touchDefusing = false;
+        }, { passive: false });
+
+
+        // --- PeerJS P2P 多人連線邏輯 ---
+        function updateP2PStatus(text) {
+            document.getElementById('p2p-status').innerText = '連線狀態: ' + text;
+        }
+
+        function initPeerJS() {
+            if (peer) return; 
+            
+            peer = new Peer();
+            
+            peer.on('open', (id) => {
+                document.getElementById('my-peer-id').innerText = id;
+                updateP2PStatus('等待連線 (Host)...');
+            });
+            
+            peer.on('error', (err) => {
+                console.error(err);
+                updateP2PStatus('連線錯誤: ' + err.type);
+            });
+            
+            // 當別人發起連線（我是 Host）
+            peer.on('connection', (conn) => {
+                p2pConn = conn;
+                isHost = true;
+                setupP2PConnection();
+            });
+        }
+
+        // 房客主動發起連線
+        document.getElementById('connect-btn').addEventListener('click', () => {
+            const targetId = document.getElementById('join-peer-id').value.trim();
+            if (!targetId) {
+                updateP2PStatus('請輸入對手 ID');
+                return;
+            }
+            
+            updateP2PStatus('連線中...');
+            p2pConn = peer.connect(targetId);
+            isHost = false; // 我是 Client (T 守護者)
+            setupP2PConnection();
+        });
+
+        // 複製 ID 按鈕 (不使用 navigator.clipboard 避免 iframe 權限報錯)
+        document.getElementById('copy-id-btn').addEventListener('click', () => {
+            const idText = document.getElementById('my-peer-id').innerText;
+            if (idText && idText !== "載入中...") {
+                const el = document.createElement('textarea');
+                el.value = idText;
+                document.body.appendChild(el);
+                el.select();
+                document.execCommand('copy');
+                document.body.removeChild(el);
+                
+                const btn = document.getElementById('copy-id-btn');
+                btn.innerText = "已複製!";
+                btn.classList.add('text-green-400');
+                setTimeout(() => {
+                    btn.innerText = "複製 ID";
+                    btn.classList.remove('text-green-400');
+                }, 1500);
+            }
+        });
+
+        function setupP2PConnection() {
+            isP2PConnected = true;
+            updateP2PStatus('連線成功 (Connected)!');
+
+            // 告知房客房主就緒
+            p2pConn.on('open', () => {
+                if (isHost) {
+                    p2pConn.send({
+                        type: 'init',
+                        role: 'T' 
+                    });
+                }
+            });
+
+            p2pConn.on('data', (data) => {
+                handleIncomingP2PData(data);
+            });
+
+            p2pConn.on('close', () => {
+                handleP2PDisconnect();
+            });
+
+            p2pConn.on('error', (err) => {
+                console.error(err);
+                handleP2PDisconnect();
+            });
+        }
+
+        function handleP2PDisconnect() {
+            isP2PConnected = false;
+            updateP2PStatus('對手已中斷連線');
+            if (opponentMesh) {
+                enemiesGroup.remove(opponentMesh);
+                opponentMesh = null;
+            }
+            const item = document.createElement('div');
+            item.className = "flex items-center space-x-2 bg-red-950 border border-red-800 text-xs px-3 py-1.5 rounded shadow-lg animate-slide-in pointer-events-none";
+            item.innerHTML = `<span class="text-red-400 font-bold">⚠️ 對手已離開多人對決！</span>`;
+            killFeed.appendChild(item);
+            setTimeout(() => item.remove(), 4000);
+        }
+
+        function handleIncomingP2PData(data) {
+            if (data.type === 'init') {
+                if (!isHost) {
+                    player.position.set(0, 1.8, -10); // Client 重新設置出生在 A 點旁
+                }
+                createOpponentMesh();
+                updateHUD();
+
+            } else if (data.type === 'state') {
+                if (opponentMesh) {
+                    opponentMesh.position.set(data.x, data.y - 1.8, data.z);
+                    opponentMesh.rotation.y = data.yaw;
+                    
+                    const head = opponentMesh.getObjectByName("head");
+                    if (head) {
+                        head.rotation.x = data.pitch;
+                    }
+
+                    // 同步槍枝模型色彩
+                    if (opponentMesh.userData.activeWpnIdx !== data.activeWpnIdx) {
+                        opponentMesh.userData.activeWpnIdx = data.activeWpnIdx;
+                        updateOpponentGunModel(data.activeWpnIdx);
+                    }
+
+                    opponentMesh.userData.isFiring = data.isFiring;
+                    opponentMesh.userData.isReloading = data.isReloading;
+
+                    // 同步 CT 拆彈進度給 T 的 HUD 上
+                    if (data.isDefusing && !isHost) {
+                        player.isDefusing = true;
+                        defuseProgressContainer.classList.remove('hidden');
+                        defuseProgressBar.style.width = `${data.defuseProgress * 100}%`;
+                    } else if (!data.isDefusing && !isHost) {
+                        player.isDefusing = false;
+                        defuseProgressContainer.classList.add('hidden');
+                    }
+                }
+            } else if (data.type === 'shoot') {
+                // 渲染對手的開火彈線
+                const startVec = new THREE.Vector3(data.origin.x, data.origin.y, data.origin.z);
+                const endVec = new THREE.Vector3(data.target.x, data.target.y, data.target.z);
+                createTracer(startVec, endVec);
+
+                // 播放對手槍擊聲
+                const wpn = weaponsConfig[data.activeWpnIdx];
+                if (wpn) {
+                    if (wpn.isSniper) playSound('awp');
+                    else if (data.activeWpnIdx === 0) playSound('ak47');
+                    else playSound('deagle');
+                }
+            } else if (data.type === 'hit') {
+                // 我被打中了！
+                if (!player.isAlive || isGameFinished) return;
+
+                playSound('hurt');
+                const damageDealt = data.damage;
+
+                if (player.armor > 0) {
+                    player.hp -= damageDealt * 0.6;
+                    player.armor -= damageDealt * 0.4;
+                } else {
+                    player.hp -= damageDealt;
+                }
+
+                updateHUD();
+
+                damageFlash.style.backgroundColor = "rgba(220, 38, 38, 0.3)";
+                setTimeout(() => {
+                    damageFlash.style.backgroundColor = "rgba(220, 38, 38, 0)";
+                }, 100);
+
+                if (player.hp <= 0) {
+                    player.hp = 0;
+                    player.isAlive = false;
+
+                    // 通知對手我死了
+                    p2pConn.send({
+                        type: 'death',
+                        wasHeadshot: data.wasHeadshot
+                    });
+
+                    triggerDefeat("killed");
+                }
+            } else if (data.type === 'death') {
+                // 對手告知其陣亡
+                handleOpponentDeath(data.wasHeadshot);
+
+            } else if (data.type === 'timer_sync') {
+                // 客端接收房長的主機 C4 時間
+                bombTimeRemaining = data.time;
+                hudTimer.innerText = bombTimeRemaining.toFixed(2);
+
+            } else if (data.type === 'game_over') {
+                if (data.resolution === 'victory') {
+                    triggerVictory();
+                } else {
+                    triggerDefeat(data.reason);
+                }
+            } else if (data.type === 'restart') {
+                restartGameP2P();
+            } else if (data.type === 'restart_request') {
+                if (isHost) {
+                    restartGameP2P();
+                    if (p2pConn) {
+                        p2pConn.send({ type: 'restart' });
+                    }
+                }
+            }
+        }
 
 
         // --- Three.js Scene Setup & Initialization ---
@@ -681,11 +1205,11 @@
             const container = document.getElementById('game-container');
             
             scene = new THREE.Scene();
-            scene.background = new THREE.Color(0xaed8f2); // Crisp sky blue
+            scene.background = new THREE.Color(0xaed8f2); 
             scene.fog = new THREE.FogExp2(0xaed8f2, 0.015);
 
             camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-            camera.rotation.order = "YXZ"; // Standard FPS order
+            camera.rotation.order = "YXZ"; 
 
             renderer = new THREE.WebGLRenderer({ antialias: true });
             renderer.setSize(window.innerWidth, window.innerHeight);
@@ -693,7 +1217,6 @@
             renderer.shadowMap.type = THREE.PCFSoftShadowMap;
             container.appendChild(renderer.domElement);
 
-            // Setup light fixtures
             ambientLight = new THREE.AmbientLight(0xfff7e6, 0.4);
             scene.add(ambientLight);
 
@@ -714,7 +1237,6 @@
             sunLight.shadow.camera.bottom = -d;
             scene.add(sunLight);
 
-            // Groups for spatial organizations
             perimeterGroup = new THREE.Group();
             obstaclesGroup = new THREE.Group();
             enemiesGroup = new THREE.Group();
@@ -724,12 +1246,10 @@
             scene.add(enemiesGroup);
             scene.add(projectileGroup);
 
-            // Create weapon placeholder attached to camera
             weaponModelHolder = new THREE.Group();
             camera.add(weaponModelHolder);
             scene.add(camera);
 
-            // Position initial gun
             constructGunModel(weaponsConfig[activeWpnIdx].modelColor);
 
             window.addEventListener('resize', onWindowResize);
@@ -743,10 +1263,9 @@
 
         // --- Build dust2 Sand / Tactical Layout ---
         function buildWorld() {
-            // Dusty sand ground
             const groundGeo = new THREE.PlaneGeometry(80, 80);
             const groundMat = new THREE.MeshStandardMaterial({ 
-                color: 0xdfc294, // Classic de_dust2 sandy base 
+                color: 0xdfc294, 
                 roughness: 0.9,
                 metalness: 0.05
             });
@@ -755,12 +1274,10 @@
             ground.receiveShadow = true;
             scene.add(ground);
 
-            // Simple floor grid lines to aid depth perception
             const gridHelper = new THREE.GridHelper(80, 40, 0x8b7355, 0x9c8262);
             gridHelper.position.y = 0.01;
             scene.add(gridHelper);
 
-            // Map Perimeter sandy brick walls
             const wallMat = new THREE.MeshStandardMaterial({ color: 0xd6b785, roughness: 0.8 });
             const walls = [
                 { w: 80, h: 10, d: 2, x: 0, y: 5, z: -40 },
@@ -778,20 +1295,16 @@
                 perimeterGroup.add(wallMesh);
             });
 
-            // "A Site" Target Area Spray Logo
             createSiteLogo();
 
-            // Tactical cover boxes (Crates)
-            const crateMat = new THREE.MeshStandardMaterial({ color: 0x825c38, roughness: 0.95 }); // Brown crates
+            const crateMat = new THREE.MeshStandardMaterial({ color: 0x825c38, roughness: 0.95 }); 
             const crates = [
-                // x, y, z, w, h, d, rotationY (degrees)
                 { x: -5, y: 1.5, z: -10, w: 3, h: 3, d: 3, r: 10 },
-                { x: -5, y: 4.5, z: -10, w: 2.5, h: 3, d: 2.5, r: -5 }, // Stacked
+                { x: -5, y: 4.5, z: -10, w: 2.5, h: 3, d: 2.5, r: -5 }, 
                 { x: 10, y: 1.5, z: -15, w: 3, h: 3, d: 3, r: -15 },
                 { x: 14, y: 1.5, z: 2, w: 4, h: 3, d: 3, r: 45 },
                 { x: -12, y: 1.5, z: 8, w: 3, h: 3, d: 3, r: 0 },
                 { x: -12, y: 1.5, z: 12, w: 3, h: 3, d: 3, r: 15 },
-                // Central A platform (C4 target zone)
                 { x: 0, y: 0.5, z: -2, w: 8, h: 1, d: 8, r: 0 }
             ];
 
@@ -804,29 +1317,25 @@
                 mesh.castShadow = true;
                 obstaclesGroup.add(mesh);
 
-                // Quick visual panel borders on boxes
                 addCrateDetails(mesh, c.w, c.h, c.d);
             });
 
             // --- BUILD BOMB MODEL (C4) ---
             const c4Group = new THREE.Group();
-            c4Group.position.set(0, 1.2, -2); // Center platform
+            c4Group.position.set(0, 1.2, -2); 
 
-            // Clay body
             const c4BodyGeo = new THREE.BoxGeometry(0.8, 0.4, 0.5);
-            const c4BodyMat = new THREE.MeshStandardMaterial({ color: 0x4d5d3d, roughness: 0.8 }); // Olive Drab plastic
+            const c4BodyMat = new THREE.MeshStandardMaterial({ color: 0x4d5d3d, roughness: 0.8 }); 
             const c4Body = new THREE.Mesh(c4BodyGeo, c4BodyMat);
             c4Body.castShadow = true;
             c4Group.add(c4Body);
 
-            // Red electronic timer pack
             const c4TimerGeo = new THREE.BoxGeometry(0.3, 0.15, 0.42);
             const c4TimerMat = new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.5 });
             const c4Timer = new THREE.Mesh(c4TimerGeo, c4TimerMat);
             c4Timer.position.set(-0.15, 0.15, 0);
             c4Group.add(c4Timer);
 
-            // Wired elements
             const wireGeo = new THREE.CylinderGeometry(0.02, 0.02, 0.4);
             const wireMat = new THREE.MeshStandardMaterial({ color: 0xcc3333 });
             const wire = new THREE.Mesh(wireGeo, wireMat);
@@ -834,7 +1343,6 @@
             wire.position.set(0.18, 0.15, 0.1);
             c4Group.add(wire);
 
-            // Flashing Light indicator
             const c4LightGeo = new THREE.SphereGeometry(0.05, 8, 8);
             const c4LightMat = new THREE.MeshBasicMaterial({ color: 0xff0000 });
             c4Light = new THREE.Mesh(c4LightGeo, c4LightMat);
@@ -842,14 +1350,12 @@
             c4Group.add(c4Light);
 
             scene.add(c4Group);
-            c4Mesh = c4Group; // Save global reference
+            c4Mesh = c4Group; 
         }
 
-        // Draw cross lines on crates for stylistic polish
         function addCrateDetails(crateMesh, w, h, d) {
             const lineMat = new THREE.MeshBasicMaterial({ color: 0x5a3e23 });
             
-            // Front diagonal cross lines
             const lineGeo1 = new THREE.BoxGeometry(w * 0.95, 0.1, 0.1);
             const l1 = new THREE.Mesh(lineGeo1, lineMat);
             l1.rotation.z = Math.atan2(h, w);
@@ -862,23 +1368,19 @@
             crateMesh.add(l2);
         }
 
-        // de_dust2 A target decal
         function createSiteLogo() {
             const canvas = document.createElement('canvas');
             canvas.width = 128;
             canvas.height = 128;
             const ctx = canvas.getContext('2d');
             
-            // Transparent background
             ctx.clearRect(0,0,128,128);
-            // Draw a big bold Red/Black "A" stencil spray
             ctx.fillStyle = '#cc2222';
             ctx.font = '900 100px Courier New, sans-serif';
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
             ctx.fillText('A', 64, 64);
             
-            // Draw stencil circle
             ctx.strokeStyle = '#cc2222';
             ctx.lineWidth = 6;
             ctx.beginPath();
@@ -891,36 +1393,32 @@
                 map: texture, 
                 transparent: true, 
                 polygonOffset: true,
-                polygonOffsetFactor: -1, // Ensures decal floats clearly on wall
+                polygonOffsetFactor: -1, 
                 roughness: 0.9
             });
 
             const decal = new THREE.Mesh(stencilGeo, stencilMat);
-            decal.position.set(0, 3, -38.9); // Center on back wall
+            decal.position.set(0, 3, -38.9); 
             scene.add(decal);
         }
 
 
-        // --- Weapon Model Generator (Stitch customized 3D shapes) ---
+        // --- Weapon Model Generator ---
         function constructGunModel(colorHex) {
-            // Remove previous
             while (weaponModelHolder.children.length > 0) {
                 weaponModelHolder.remove(weaponModelHolder.children[0]);
             }
 
             const modelGroup = new THREE.Group();
-
             const bodyMat = new THREE.MeshStandardMaterial({ color: colorHex, roughness: 0.5, metalness: 0.8 });
             const darkMat = new THREE.MeshStandardMaterial({ color: 0x151515, roughness: 0.7 });
 
-            // Weapon barrel / Frame
             const barrelGeo = new THREE.BoxGeometry(0.12, 0.12, 0.9);
             const barrel = new THREE.Mesh(barrelGeo, bodyMat);
             barrel.position.set(0.3, -0.3, -0.8);
             barrel.castShadow = true;
             modelGroup.add(barrel);
 
-            // Handle grip
             const gripGeo = new THREE.BoxGeometry(0.1, 0.28, 0.12);
             const grip = new THREE.Mesh(gripGeo, darkMat);
             grip.position.set(0.3, -0.45, -0.55);
@@ -928,7 +1426,6 @@
             grip.castShadow = true;
             modelGroup.add(grip);
 
-            // Scope construct (specifically look big on AWP sniper)
             const activeWpn = weaponsConfig[activeWpnIdx];
             if (activeWpn.isSniper) {
                 const scopeGeo = new THREE.CylinderGeometry(0.06, 0.06, 0.5);
@@ -937,7 +1434,6 @@
                 scopeMesh.position.set(0.3, -0.19, -0.75);
                 modelGroup.add(scopeMesh);
 
-                // Scope mounts
                 const mountGeo = new THREE.BoxGeometry(0.04, 0.08, 0.04);
                 const mount1 = new THREE.Mesh(mountGeo, darkMat);
                 mount1.position.set(0.3, -0.23, -0.9);
@@ -957,22 +1453,18 @@
 
             activeDiff = diffSel;
 
-            // Resolve Modifiers (Handle random option)
             if (modSel === 'random') {
-                const randIdx = Math.floor(Math.random() * (MODIFIERS.length - 1)) + 1; // 隨機抽選 1~5 號突發狀況
+                const randIdx = Math.floor(Math.random() * (MODIFIERS.length - 1)) + 1; 
                 activeMod = MODIFIERS[randIdx];
             } else {
                 activeMod = MODIFIERS.find(m => m.id === modSel) || MODIFIERS[0];
             }
 
-            // Sync Mission Brief UI
             document.getElementById('hud-modifier-title').innerText = activeMod.name;
             document.getElementById('hud-modifier-desc').innerText = activeMod.desc;
 
-            // Apply round limit timer
             bombTimeRemaining = activeMod.timer;
 
-            // Difficulty-based Player attributes scaling
             if (activeDiff === 'easy') {
                 player.hp = 150;
                 player.armor = 150;
@@ -984,20 +1476,18 @@
                 player.armor = 100;
             } else if (activeDiff === 'expert') {
                 player.hp = 100;
-                player.armor = 50; // Expert begins with restricted shield
+                player.armor = 50; 
             }
 
-            // Apply 3D Environmental variables (Fog, Lights, Gaze Flashlight)
             if (scene) {
                 if (activeMod.night) {
                     scene.background.setHex(0x05050a);
                     scene.fog.color.setHex(0x05050a);
                     scene.fog.density = activeMod.fog;
                     
-                    if (sunLight) sunLight.intensity = 0.05; // extremely dim moonlight
+                    if (sunLight) sunLight.intensity = 0.05; 
                     if (ambientLight) ambientLight.intensity = 0.08;
 
-                    // Setup or activate high power dynamic flashlight
                     if (!flashlight) {
                         flashlight = new THREE.SpotLight(0xfffdd0, 8, 35, Math.PI / 5, 0.6, 1);
                         flashlight.castShadow = true;
@@ -1012,7 +1502,7 @@
                     }
                     flashlight.visible = true;
                 } else {
-                    scene.background.setHex(0xaed8f2); // Day sky blue
+                    scene.background.setHex(0xaed8f2); 
                     scene.fog.color.setHex(0xaed8f2);
                     scene.fog.density = activeMod.fog;
 
@@ -1024,11 +1514,18 @@
             }
         }
 
-        // --- Tactical AI (Terrorists enemy targets spawning & handling) ---
+        // --- Tactical AI / Opponent Spawning ---
         function spawnEnemies() {
-            // Clear prior enemies
             while(enemiesGroup.children.length > 0) {
                 enemiesGroup.remove(enemiesGroup.children[0]);
+            }
+
+            // 多人連線模式下不產生單人 AI Bots，只初始化對手模型
+            if (isMultiplayer) {
+                if (isP2PConnected) {
+                    createOpponentMesh();
+                }
+                return;
             }
 
             const enemySpots = [
@@ -1036,25 +1533,24 @@
                 { x: 18, y: 1, z: -15 },
                 { x: -28, y: 1, z: -5 },
                 { x: 25, y: 1, z: 8 },
-                { x: 0, y: 1, z: -12 } // Standing on box site guarding
+                { x: 0, y: 1, z: -12 } 
             ];
 
-            // Setup scaling ratios based on selected difficulty setting
             let diffHpMult = 1.0;
             let diffCooldownMult = 1.0;
 
             if (activeDiff === 'easy') {
                 diffHpMult = 0.7;
-                diffCooldownMult = 1.5; // slow fire intervals
+                diffCooldownMult = 1.5; 
             } else if (activeDiff === 'normal') {
                 diffHpMult = 1.0;
                 diffCooldownMult = 1.0;
             } else if (activeDiff === 'hard') {
                 diffHpMult = 1.35;
-                diffCooldownMult = 0.8; // faster fire rate
+                diffCooldownMult = 0.8; 
             } else if (activeDiff === 'expert') {
                 diffHpMult = 1.6;
-                diffCooldownMult = 0.6; // lightning aggressive response
+                diffCooldownMult = 0.6; 
             }
 
             enemySpots.forEach((spot, index) => {
@@ -1062,7 +1558,6 @@
                 enemyGroup.position.set(spot.x, spot.y, spot.z);
                 enemyGroup.name = "Enemy_" + index;
 
-                // Base stats merged with both Difficulty parameters and Active Modifiers
                 const baseHp = 100 * activeMod.hpMult * diffHpMult;
                 const fireInterval = (1200 + Math.random() * 800) * activeMod.fireRateMult * diffCooldownMult;
                 const patrolSpeed = (0.03 + Math.random() * 0.02) * activeMod.speedMult;
@@ -1078,16 +1573,14 @@
                     speed: patrolSpeed
                 };
 
-                // Head part - Crucial for headshot logic!
                 const headGeo = new THREE.SphereGeometry(0.38, 16, 16);
-                const headMat = new THREE.MeshStandardMaterial({ color: 0x9e3131, roughness: 0.6 }); // Masked red head
+                const headMat = new THREE.MeshStandardMaterial({ color: 0x9e3131, roughness: 0.6 }); 
                 
-                // Visual modifier cues for enemy bodies
                 if (activeMod.id === 'furious') {
-                    headMat.color.setHex(0xff1111); // angry red glow head
+                    headMat.color.setHex(0xff1111); 
                     headMat.emissive.setHex(0x660000);
                 } else if (activeMod.id === 'night') {
-                    headMat.color.setHex(0x11111a); // dark camo headmask
+                    headMat.color.setHex(0x11111a); 
                 }
 
                 const head = new THREE.Mesh(headGeo, headMat);
@@ -1096,17 +1589,15 @@
                 head.name = "head";
                 enemyGroup.add(head);
 
-                // Body torso
                 const bodyGeo = new THREE.CylinderGeometry(0.4, 0.45, 1.1, 16);
-                const bodyMat = new THREE.MeshStandardMaterial({ color: 0xc4af80, roughness: 0.7 }); // Desert camo yellow body
+                const bodyMat = new THREE.MeshStandardMaterial({ color: 0xc4af80, roughness: 0.7 }); 
                 
-                // Modifier outfit adjustments
                 if (activeMod.id === 'heavy') {
-                    bodyMat.color.setHex(0x3e403d); // gunmetal color armor plate
+                    bodyMat.color.setHex(0x3e403d); 
                 } else if (activeMod.id === 'night') {
-                    bodyMat.color.setHex(0x1a2536); // tactical midnight dark blue camo
+                    bodyMat.color.setHex(0x1a2536); 
                 } else if (activeMod.id === 'fog') {
-                    bodyMat.color.setHex(0x7c8a99); // grey slate fog camouflage
+                    bodyMat.color.setHex(0x7c8a99); 
                 }
 
                 const body = new THREE.Mesh(bodyGeo, bodyMat);
@@ -1116,13 +1607,11 @@
                 body.name = "body";
                 enemyGroup.add(body);
 
-                // Apply geometry scale up for Heavy Armor modifier
                 if (activeMod.id === 'heavy') {
-                    body.scale.set(1.3, 1.0, 1.3); // bulky thick torso
+                    body.scale.set(1.3, 1.0, 1.3); 
                     head.scale.set(1.1, 1.1, 1.1);
                 }
 
-                // Enemy block gun
                 const gunGeo = new THREE.BoxGeometry(0.1, 0.1, 0.6);
                 const gunMat = new THREE.MeshStandardMaterial({ color: 0x111111 });
                 const gun = new THREE.Mesh(gunGeo, gunMat);
@@ -1133,19 +1622,88 @@
             });
         }
 
+        // --- 產生多人連線對手 3D 模型 ---
+        function createOpponentMesh() {
+            if (opponentMesh) {
+                enemiesGroup.remove(opponentMesh);
+            }
+
+            const enemyGroup = new THREE.Group();
+            // 房客(T)初始出現在 C4 附近，房長(CT)出現在 CT 家
+            enemyGroup.position.set(0, 1, isHost ? -10 : 18);
+            enemyGroup.name = "Opponent";
+            enemyGroup.userData = {
+                activeWpnIdx: 0,
+                isFiring: false,
+                isReloading: false
+            };
+
+            const headGeo = new THREE.SphereGeometry(0.38, 16, 16);
+            // 房主為 CT (藍色款)，房客為 T (紅色款)
+            const oppTeamColor = isHost ? 0x9e3131 : 0x31559e; 
+            const headMat = new THREE.MeshStandardMaterial({ color: oppTeamColor, roughness: 0.6 });
+            const head = new THREE.Mesh(headGeo, headMat);
+            head.position.set(0, 1.6, 0);
+            head.castShadow = true;
+            head.name = "head";
+            enemyGroup.add(head);
+
+            const bodyGeo = new THREE.CylinderGeometry(0.4, 0.45, 1.1, 16);
+            const oppBodyColor = isHost ? 0xc4af80 : 0x1a2536; 
+            const bodyMat = new THREE.MeshStandardMaterial({ color: oppBodyColor, roughness: 0.7 });
+            const body = new THREE.Mesh(bodyGeo, bodyMat);
+            body.position.set(0, 0.75, 0);
+            body.castShadow = true;
+            body.receiveShadow = true;
+            body.name = "body";
+            enemyGroup.add(body);
+
+            const gunGroup = new THREE.Group();
+            gunGroup.name = "gun_model";
+            enemyGroup.add(gunGroup);
+
+            enemiesGroup.add(enemyGroup);
+            opponentMesh = enemyGroup;
+
+            updateOpponentGunModel(0);
+        }
+
+        function updateOpponentGunModel(wpnIdx) {
+            if (!opponentMesh) return;
+            const gunGroup = opponentMesh.getObjectByName("gun_model");
+            if (!gunGroup) return;
+
+            while(gunGroup.children.length > 0) {
+                gunGroup.remove(gunGroup.children[0]);
+            }
+
+            const wpn = weaponsConfig[wpnIdx];
+            const bodyMat = new THREE.MeshStandardMaterial({ color: wpn.modelColor, roughness: 0.5, metalness: 0.8 });
+            const darkMat = new THREE.MeshStandardMaterial({ color: 0x151515, roughness: 0.7 });
+
+            const barrelGeo = new THREE.BoxGeometry(0.12, 0.12, 0.9);
+            const barrel = new THREE.Mesh(barrelGeo, bodyMat);
+            barrel.position.set(0.3, 0.85, -0.6);
+            gunGroup.add(barrel);
+
+            const gripGeo = new THREE.BoxGeometry(0.1, 0.28, 0.12);
+            const grip = new THREE.Mesh(gripGeo, darkMat);
+            grip.position.set(0.3, 0.7, -0.45);
+            gunGroup.add(grip);
+        }
+
 
         // --- Game Controls Actions & Guns Mechanics ---
         function switchWeapon(index) {
             if (activeWpnIdx === index || isReloading) return;
             
             activeWpnIdx = index;
-            isScoped = 0; // reset zoom
+            isScoped = 0; 
             updateZoom();
             constructGunModel(weaponsConfig[activeWpnIdx].modelColor);
             playSound('switch');
             updateHUD();
 
-            // Highlight bar choice
             for (let i = 0; i < 3; i++) {
                 const btn = document.getElementById(`wpn-btn-${i+1}`);
                 if (i === index) {
@@ -1154,18 +1712,28 @@
                     btn.className = "px-4 py-2 rounded text-xs font-bold border transition-all duration-150 text-zinc-400 border-zinc-700 bg-zinc-900/40";
                 }
             }
+
+            if (weaponsConfig[activeWpnIdx].isSniper) {
+                btnScope.classList.remove('hidden');
+            } else {
+                btnScope.classList.add('hidden');
+            }
         }
 
         function updateZoom() {
+            const crosshair = document.getElementById('crosshair');
             if (isScoped === 1) {
-                camera.fov = 30; // Medium Zoom
+                camera.fov = 30; 
                 sniperScope.style.display = 'block';
+                if (crosshair) crosshair.style.display = 'none'; 
             } else if (isScoped === 2) {
-                camera.fov = 10; // Extra Zoom
+                camera.fov = 10; 
                 sniperScope.style.display = 'block';
+                if (crosshair) crosshair.style.display = 'none';
             } else {
-                camera.fov = 75; // Return normal FOV
+                camera.fov = 75; 
                 sniperScope.style.display = 'none';
+                if (crosshair) crosshair.style.display = 'block';
             }
             camera.updateProjectionMatrix();
         }
@@ -1197,17 +1765,15 @@
 
             if (now - lastFiredTime < wpn.fireRate) return;
             if (wpn.ammoClip <= 0) {
-                playSound('beep'); // Empty chamber click sound
+                playSound('beep'); 
                 reloadWeapon();
                 return;
             }
 
-            // Fire execution
             wpn.ammoClip--;
             lastFiredTime = now;
             updateHUD();
 
-            // Sound
             if (wpn.isSniper) {
                 playSound('awp');
             } else if (activeWpnIdx === 0) {
@@ -1216,18 +1782,13 @@
                 playSound('deagle');
             }
 
-            // Apply recoil to visual gun model
             weaponModelHolder.position.z += 0.25;
             weaponModelHolder.position.y += 0.05;
 
-            // Simple camera screen shake (recoil feedback)
             pitch += wpn.recoilY;
             yaw += (Math.random() - 0.5) * wpn.recoilX;
 
-            // Trigger visual muzzle flash
             createMuzzleFlash();
-
-            // Shoot Raycast calculations
             raycastShot();
         }
 
@@ -1252,39 +1813,31 @@
         function raycastShot() {
             const wpn = weaponsConfig[activeWpnIdx];
             
-            // Build raycaster from dead center of viewport screen
             const raycaster = new THREE.Raycaster();
             const centerScreen = new THREE.Vector2(0, 0);
             raycaster.setFromCamera(centerScreen, camera);
 
-            // Add bullet tracer line
             const origin = new THREE.Vector3();
-            // Trace origin slightly offset near actual muzzle
             origin.setFromMatrixPosition(weaponModelHolder.matrixWorld);
             
-            // Intersects detection
-            // Note: Must traverse nested child meshes inside enemies group
             const hits = raycaster.intersectObjects(enemiesGroup.children, true);
             
             let hitTarget = null;
             let endPos = new THREE.Vector3();
-            // Max ray distance 100 meters
             raycaster.ray.at(100, endPos);
 
             if (hits.length > 0) {
                 hitTarget = hits[0];
                 endPos.copy(hitTarget.point);
 
-                // Analyze what part was hit
                 let hitMesh = hitTarget.object;
                 let enemyGroup = hitMesh.parent;
                 
-                // Safety traversal to root enemy group
-                while (enemyGroup && !enemyGroup.name.startsWith("Enemy_")) {
+                while (enemyGroup && !enemyGroup.name.startsWith("Enemy_") && enemyGroup.name !== "Opponent") {
                     enemyGroup = enemyGroup.parent;
                 }
 
-                if (enemyGroup && enemyGroup.userData.hp > 0) {
+                if (enemyGroup) {
                     let isHeadshot = (hitMesh.name === "head");
                     let damage = wpn.damage;
                     if (isHeadshot) {
@@ -1292,34 +1845,52 @@
                         triggerHeadshotAlert();
                     }
 
-                    enemyGroup.userData.hp -= damage;
-                    
-                    // Flash enemy model brief Red as visual damage cue
-                    flashEnemyHit(hitMesh);
-
-                    // Check if dead
-                    if (enemyGroup.userData.hp <= 0) {
-                        handleEnemyDeath(enemyGroup, isHeadshot);
+                    // 1. 單人離線 AI 判定
+                    if (enemyGroup.name.startsWith("Enemy_") && enemyGroup.userData.hp > 0) {
+                        enemyGroup.userData.hp -= damage;
+                        flashEnemyHit(hitMesh);
+                        if (enemyGroup.userData.hp <= 0) {
+                            handleEnemyDeath(enemyGroup, isHeadshot);
+                        }
+                    } 
+                    // 2. 多人連線 P2P 本地射擊命中判定 (傳送傷害給對手)
+                    else if (enemyGroup.name === "Opponent") {
+                        flashEnemyHit(hitMesh);
+                        if (isP2PConnected && p2pConn) {
+                            p2pConn.send({
+                                type: 'hit',
+                                damage: damage,
+                                wasHeadshot: isHeadshot
+                            });
+                        }
                     }
                 }
             }
 
-            // Create visible yellow trajectory line tracer
             createTracer(origin, endPos);
+
+            // 多人連線下發送彈道資料給對手渲染
+            if (isMultiplayer && isP2PConnected && p2pConn) {
+                p2pConn.send({
+                    type: 'shoot',
+                    activeWpnIdx: activeWpnIdx,
+                    origin: { x: origin.x, y: origin.y, z: origin.z },
+                    target: { x: endPos.x, y: endPos.y, z: endPos.z }
+                });
+            }
         }
 
         function createTracer(start, end) {
             const points = [start, end];
             const geo = new THREE.BufferGeometry().setFromPoints(points);
             const mat = new THREE.LineBasicMaterial({ 
-                color: activeWpnIdx === 1 ? 0xff3300 : 0xffea33, // red for sniper, amber for others 
+                color: activeWpnIdx === 1 ? 0xff3300 : 0xffea33, 
                 transparent: true,
                 opacity: 0.8
             });
             const line = new THREE.Line(geo, mat);
             scene.add(line);
 
-            // Quick fade out
             let op = 0.8;
             function fade() {
                 op -= 0.15;
@@ -1337,7 +1908,7 @@
 
         function flashEnemyHit(mesh) {
             const origColor = mesh.material.color.getHex();
-            mesh.material.color.setHex(0xffffff); // highlight white
+            mesh.material.color.setHex(0xffffff); 
             setTimeout(() => {
                 if (mesh && mesh.material) {
                     mesh.material.color.setHex(origColor);
@@ -1355,17 +1926,13 @@
         }
 
         function handleEnemyDeath(enemy, wasHeadshot) {
-            // Particle explosion on death position
             createDamageParticles(enemy.position);
-
-            // Remove enemy from calculations
             enemiesGroup.remove(enemy);
             killCount++;
 
-            // Create CS classic kill feed notice
             const weaponName = weaponsConfig[activeWpnIdx].name;
             const item = document.createElement('div');
-            item.className = "flex items-center space-x-2 bg-black/70 border border-zinc-800 text-xs px-3 py-1.5 rounded shadow-lg animate-slide-in";
+            item.className = "flex items-center space-x-2 bg-black/70 border border-zinc-800 text-xs px-3 py-1.5 rounded shadow-lg animate-slide-in pointer-events-none";
             
             const headshotSymbol = wasHeadshot ? '💥 💀' : '';
             item.innerHTML = `
@@ -1381,10 +1948,45 @@
                 setTimeout(() => item.remove(), 500);
             }, 5000);
 
-            // Evaluate Win checks
             if (enemiesGroup.children.length === 0) {
-                // All cleared -> Show defuse indicator hints
                 defuseTip.classList.remove('hidden');
+            }
+        }
+
+        // 多人連線下擊殺對手
+        function handleOpponentDeath(wasHeadshot) {
+            if (opponentMesh) {
+                createDamageParticles(opponentMesh.position);
+                enemiesGroup.remove(opponentMesh);
+                opponentMesh = null;
+            }
+            killCount++;
+
+            const weaponName = weaponsConfig[activeWpnIdx].name;
+            const item = document.createElement('div');
+            item.className = "flex items-center space-x-2 bg-black/70 border border-zinc-800 text-xs px-3 py-1.5 rounded shadow-lg animate-slide-in pointer-events-none";
+            const headshotSymbol = wasHeadshot ? '💥 💀' : '';
+            item.innerHTML = `
+                <span class="${isHost ? 'text-blue-400' : 'text-red-400'} font-bold">${isHost ? 'CT' : 'T'}</span>
+                <span class="text-zinc-400">🔫 [${weaponName}]</span>
+                <span class="${isHost ? 'text-red-400' : 'text-blue-400'} font-bold">${isHost ? 'T' : 'CT'}</span>
+                <span class="text-amber-500 font-semibold">${headshotSymbol}</span>
+            `;
+            killFeed.appendChild(item);
+            setTimeout(() => {
+                item.style.opacity = '0';
+                setTimeout(() => item.remove(), 500);
+            }, 5000);
+
+            // 我贏了！
+            triggerVictory();
+
+            if (isP2PConnected && p2pConn) {
+                p2pConn.send({
+                    type: 'game_over',
+                    resolution: 'defeat',
+                    reason: 'killed'
+                });
             }
         }
 
@@ -1392,20 +1994,19 @@
         function createDamageParticles(position) {
             const count = 20;
             const geo = new THREE.BoxGeometry(0.12, 0.12, 0.12);
-            const mat = new THREE.MeshBasicMaterial({ color: 0x990000 }); // Red blood spatter
+            const mat = new THREE.MeshBasicMaterial({ color: 0x990000 }); 
             
             const particles = [];
             for (let i = 0; i < count; i++) {
                 const p = new THREE.Mesh(geo, mat);
                 p.position.copy(position);
-                p.position.y += 1.0; // Chest level
+                p.position.y += 1.0; 
                 
-                // Random velocities
                 p.userData = {
                     vx: (Math.random() - 0.5) * 0.2,
                     vy: Math.random() * 0.25,
                     vz: (Math.random() - 0.5) * 0.2,
-                    life: 25 // frame count
+                    life: 25 
                 };
                 
                 scene.add(p);
@@ -1420,7 +2021,7 @@
                         p.position.y += p.userData.vy;
                         p.position.z += p.userData.vz;
                         
-                        p.userData.vy -= 0.012; // Gravity
+                        p.userData.vy -= 0.012; 
                         p.userData.life--;
                         alive = true;
                     } else {
@@ -1437,32 +2038,85 @@
 
         // --- C4 Defuse Logic Handling ---
         function checkBombProximity() {
-            if (enemiesGroup.children.length > 0) return; // Must secure perimeter first!
-
-            const dist = player.position.distanceTo(c4Mesh.position);
-            
-            if (dist < 4.0) {
-                defuseTip.classList.remove('hidden');
-                
-                // If pressing E key
-                if (keyMap['KeyE']) {
-                    if (!player.isDefusing) {
-                        player.isDefusing = true;
-                        defuseProgressContainer.classList.remove('hidden');
+            if (isMultiplayer) {
+                if (isHost) {
+                    // 多人連線下只有房長 (CT) 具有拆彈權
+                    const dist = player.position.distanceTo(c4Mesh.position);
+                    if (dist < 4.0) {
+                        defuseTip.classList.remove('hidden');
+                        
+                        const isTouchActive = (mobileTouchHud.style.display === 'block');
+                        if (isTouchActive) {
+                            btnDefuse.classList.remove('hidden');
+                        }
+                        
+                        if (keyMap['KeyE'] || touchDefusing) {
+                            if (!player.isDefusing) {
+                                player.isDefusing = true;
+                                defuseProgressContainer.classList.remove('hidden');
+                            }
+                            
+                            player.defuseProgress += 0.02 * (clock.getDelta() * 60); 
+                            if (player.defuseProgress >= 1.0) {
+                                player.defuseProgress = 1.0;
+                                triggerVictory(); // CT 勝利
+                                
+                                if (p2pConn) {
+                                    p2pConn.send({
+                                        type: 'game_over',
+                                        resolution: 'defeat',
+                                        reason: 'defused'
+                                    });
+                                }
+                            }
+                            defuseProgressBar.style.width = `${player.defuseProgress * 100}%`;
+                        } else {
+                            resetDefusalProgress();
+                        }
+                    } else {
+                        defuseTip.classList.add('hidden');
+                        btnDefuse.classList.add('hidden');
+                        resetDefusalProgress();
                     }
-                    
-                    player.defuseProgress += 0.02; // Roughly progress increments
-                    if (player.defuseProgress >= 1.0) {
-                        player.defuseProgress = 1.0;
-                        triggerVictory();
-                    }
-                    defuseProgressBar.style.width = `${player.defuseProgress * 100}%`;
                 } else {
-                    resetDefusalProgress();
+                    // 房客是 T，負責守炸彈，不具拆彈能力
+                    defuseTip.classList.add('hidden');
+                    btnDefuse.classList.add('hidden');
                 }
             } else {
-                defuseTip.classList.add('hidden');
-                resetDefusalProgress();
+                // 單人模式
+                if (enemiesGroup.children.length > 0) return; 
+
+                const dist = player.position.distanceTo(c4Mesh.position);
+                
+                if (dist < 4.0) {
+                    defuseTip.classList.remove('hidden');
+                    
+                    const isTouchActive = (mobileTouchHud.style.display === 'block');
+                    if (isTouchActive) {
+                        btnDefuse.classList.remove('hidden');
+                    }
+                    
+                    if (keyMap['KeyE'] || touchDefusing) {
+                        if (!player.isDefusing) {
+                            player.isDefusing = true;
+                            defuseProgressContainer.classList.remove('hidden');
+                        }
+                        
+                        player.defuseProgress += 0.02; 
+                        if (player.defuseProgress >= 1.0) {
+                            player.defuseProgress = 1.0;
+                            triggerVictory();
+                        }
+                        defuseProgressBar.style.width = `${player.defuseProgress * 100}%`;
+                    } else {
+                        resetDefusalProgress();
+                    }
+                } else {
+                    defuseTip.classList.add('hidden');
+                    btnDefuse.classList.add('hidden');
+                    resetDefusalProgress();
+                }
             }
         }
 
@@ -1471,9 +2125,9 @@
             player.defuseProgress = 0;
             defuseProgressContainer.classList.add('hidden');
             defuseProgressBar.style.width = `0%`;
+            touchDefusing = false; 
         }
 
-        // Helper translation mapping for difficulty stats display
         function getDifficultyChinese(diff) {
             switch(diff) {
                 case 'easy': return '輕鬆訓練 (Easy Ops)';
@@ -1494,13 +2148,21 @@
             
             modalTitle.innerText = "任務完成";
             modalTitle.className = "text-3xl font-black mb-2 tracking-wide text-green-500";
-            modalSubtitle.innerText = "Counter-Terrorists win!";
             
-            // Populate stats
+            if (isMultiplayer) {
+                if (isHost) {
+                    modalSubtitle.innerText = "成功消滅威脅或拆除 C4！反恐精英勝利！";
+                } else {
+                    modalSubtitle.innerText = "成功守護 C4 或消滅對手！恐怖份子勝利！";
+                }
+            } else {
+                modalSubtitle.innerText = "Counter-Terrorists win!";
+            }
+            
             document.getElementById('modal-stat-diff').innerText = getDifficultyChinese(activeDiff);
             document.getElementById('modal-stat-modifier').innerText = activeMod.name;
             modalStatKills.innerText = killCount;
-            modalStatDefused.innerText = "是 (C4 拆除成功)";
+            modalStatDefused.innerText = isHost ? (player.defuseProgress >= 1.0 ? "是" : "否 (擊殺對手)") : "不適用 (守彈方)";
             modalStatTime.innerText = `${bombTimeRemaining.toFixed(2)} 秒`;
 
             statusModal.classList.remove('hidden');
@@ -1513,7 +2175,6 @@
 
             if (reason === "explosion") {
                 playSound('explosion');
-                // Create massive flash overlay
                 damageFlash.style.backgroundColor = "rgba(255, 255, 255, 1.0)";
                 setTimeout(() => {
                     damageFlash.style.backgroundColor = "rgba(0,0,0,0.85)";
@@ -1522,9 +2183,13 @@
 
             modalTitle.innerText = "任務失敗";
             modalTitle.className = "text-3xl font-black mb-2 tracking-wide text-red-500";
-            modalSubtitle.innerText = reason === "explosion" ? "炸彈已引爆！" : "你已在交火中陣亡！";
             
-            // Populate stats
+            if (isMultiplayer) {
+                modalSubtitle.innerText = reason === "explosion" ? "炸彈引爆！恐怖份子獲勝！" : "你已陣亡！恐怖份子獲勝！";
+            } else {
+                modalSubtitle.innerText = reason === "explosion" ? "炸彈已引爆！" : "你已在交火中陣亡！";
+            }
+            
             document.getElementById('modal-stat-diff').innerText = getDifficultyChinese(activeDiff);
             document.getElementById('modal-stat-modifier').innerText = activeMod.name;
             modalStatKills.innerText = killCount;
@@ -1534,13 +2199,40 @@
             statusModal.classList.remove('hidden');
         }
 
+        // 重新開始處理 (支援多人 P2P 同步)
         function restartGame() {
-            // Read UI and refresh dynamic difficulty stats
+            if (isMultiplayer) {
+                if (isHost) {
+                    restartGameP2P();
+                    if (p2pConn) {
+                        p2pConn.send({
+                            type: 'restart'
+                        });
+                    }
+                } else {
+                    // 客端通知房長發起重新開始
+                    if (p2pConn) {
+                        p2pConn.send({
+                            type: 'restart_request'
+                        });
+                    }
+                    const btn = document.querySelector("#status-modal button");
+                    if (btn) btn.innerText = "等待房長開始...";
+                }
+            } else {
+                restartGameP2P();
+            }
+        }
+
+        function restartGameP2P() {
             applyMissionSettings();
 
-            // Reset player metrics
             player.isAlive = true;
-            player.position.set(0, 1.8, 18);
+            if (isMultiplayer) {
+                player.position.set(isHost ? 0 : 0, 1.8, isHost ? 18 : -10);
+            } else {
+                player.position.set(0, 1.8, 18);
+            }
             camera.position.copy(player.position);
             yaw = 0;
             pitch = 0;
@@ -1549,7 +2241,6 @@
             c4TickInterval = 1000;
             isGameFinished = false;
 
-            // Reset weapon reserves
             weaponsConfig.forEach(wpn => {
                 wpn.ammoClip = wpn.maxClip;
                 wpn.ammoReserve = wpn.maxReserve;
@@ -1560,11 +2251,17 @@
             resetDefusalProgress();
             damageFlash.style.backgroundColor = "rgba(255,0,0,0)";
 
+            const btn = document.querySelector("#status-modal button");
+            if (btn) btn.innerText = "再次挑戰";
+
             spawnEnemies();
             updateHUD();
 
-            // Auto trigger mouse lock request again
-            document.body.requestPointerLock();
+            const ctrlMode = document.getElementById('controls-select').value;
+            const useTouch = (ctrlMode === 'touch') || (ctrlMode === 'auto' && isTouchDevice);
+            if (!useTouch) {
+                document.body.requestPointerLock();
+            }
         }
 
         // --- HUD State Sync ---
@@ -1577,7 +2274,6 @@
             hudAmmoClip.innerText = currentWpn.ammoClip;
             hudAmmoReserve.innerText = currentWpn.ammoReserve;
 
-            // Highlight red text when low ammo
             if (currentWpn.ammoClip <= currentWpn.maxClip * 0.3) {
                 reloadPrompt.classList.remove('hidden');
             } else {
@@ -1593,31 +2289,47 @@
             const delta = clock.getDelta();
 
             if (player.isAlive && !isGameFinished) {
-                // 1. Process player WASD Movement
                 handlePlayerMovement(delta);
 
-                // 2. Continuous AK automatic firing handle
                 if (isFiring && weaponsConfig[activeWpnIdx].isAuto) {
                     shootWeapon();
                 }
 
-                // 3. Gradual gun recoil animation recovery
                 weaponModelHolder.position.z = THREE.MathUtils.lerp(weaponModelHolder.position.z, 0, 0.15);
                 weaponModelHolder.position.y = THREE.MathUtils.lerp(weaponModelHolder.position.y, 0, 0.15);
 
-                // 4. Enemy AI update turns, movements & weapon firing cycles
-                updateEnemyAI(delta);
+                // 更新 AI (僅在單人模式下運行)
+                if (!isMultiplayer) {
+                    updateEnemyAI(delta);
+                }
 
-                // 5. C4 Ticking timer checks
                 handleC4Timing();
-
-                // 6. Proximity to C4 bomb handling
                 checkBombProximity();
+
+                // 多人連線下：以 30Hz 頻率廣播本地狀態
+                if (isMultiplayer && isP2PConnected && p2pConn) {
+                    const now = performance.now();
+                    if (now - lastBroadcastTime > BROADCAST_INTERVAL) {
+                        lastBroadcastTime = now;
+                        p2pConn.send({
+                            type: 'state',
+                            x: player.position.x,
+                            y: player.position.y,
+                            z: player.position.z,
+                            yaw: yaw,
+                            pitch: pitch,
+                            activeWpnIdx: activeWpnIdx,
+                            isFiring: isFiring,
+                            isReloading: isReloading,
+                            isDefusing: player.isDefusing,
+                            defuseProgress: player.defuseProgress
+                        });
+                    }
+                }
             }
 
-            // Keep 3D Camera synchronized with player eyes position & rotation vectors
             camera.position.copy(player.position);
-            camera.rotation.set(0, 0, 0); // Flush
+            camera.rotation.set(0, 0, 0); 
             camera.rotation.y = yaw;
             camera.rotation.x = pitch;
 
@@ -1626,9 +2338,8 @@
 
         // --- 3D 多重高度地表判定機制 ---
         function getFloorY(x, z) {
-            let highestFloor = 0.0; // 預設地面高度為 y = 0
+            let highestFloor = 0.0; 
             
-            // 定義玩家在 XZ 軸上的 2D 碰撞範圍 (大小為 1x1 的正方形)
             const pMinX = x - 0.5;
             const pMaxX = x + 0.5;
             const pMinZ = z - 0.5;
@@ -1637,15 +2348,11 @@
             obstaclesGroup.children.forEach(child => {
                 const box = new THREE.Box3().setFromObject(child);
                 
-                // 檢查玩家與該障礙物在 X 與 Z 軸上是否有水平重疊
                 const overlapX = (pMinX < box.max.x) && (pMaxX > box.min.x);
                 const overlapZ = (pMinZ < box.max.z) && (pMaxZ > box.min.z);
                 
                 if (overlapX && overlapZ) {
-                    // 若有水平重疊，且玩家當前的「雙腳高度 (Feet Y)」處於該障礙物頂端上方或略低處時，判定可以站立其上
                     const feetY = player.position.y - 1.8;
-                    
-                    // box.max.y 即為障礙物的頂部高度。-0.4 的緩衝範圍是用來確保跳躍下落或走近邊緣時能順暢地抓取到表面
                     if (feetY >= box.max.y - 0.4) {
                         if (box.max.y > highestFloor) {
                             highestFloor = box.max.y;
@@ -1658,7 +2365,7 @@
         }
 
         function handlePlayerMovement(delta) {
-            const speed = 7.0; // 走動速度
+            const speed = 7.0; 
             const moveDirection = new THREE.Vector3(0, 0, 0);
 
             if (keyMap['KeyW']) moveDirection.z -= 1;
@@ -1666,25 +2373,23 @@
             if (keyMap['KeyA']) moveDirection.x -= 1;
             if (keyMap['KeyD']) moveDirection.x += 1;
 
+            if (joystickActive) {
+                moveDirection.z += joystickVector.y; 
+                moveDirection.x += joystickVector.x; 
+            }
+
             moveDirection.normalize();
-            
-            // 將移動向量旋轉對齊玩家當前水平視角 (Yaw)
             moveDirection.applyAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
 
-            // 計算預期移動的下一個位置
             const displacement = moveDirection.multiplyScalar(speed * delta);
             const nextPosition = player.position.clone().add(displacement);
 
-            // 邊界限制 check
             if (Math.abs(nextPosition.x) < 38.5 && Math.abs(nextPosition.z) < 38.5) {
-                // 障礙物 3D 碰撞盒檢測
                 let col = false;
                 
                 const feetY = player.position.y - 1.8;
                 const headY = player.position.y + 0.2;
                 
-                // 動態 3D 玩家碰撞體：只在玩家當前的垂直高度區間進行水平碰撞檢查
-                // feetY + 0.1 可以防止腳底直接磨擦站立的平台頂部而造成卡死
                 const pBox = new THREE.Box3(
                     new THREE.Vector3(nextPosition.x - 0.5, feetY + 0.1, nextPosition.z - 0.5),
                     new THREE.Vector3(nextPosition.x + 0.5, headY - 0.1, nextPosition.z + 0.5)
@@ -1704,32 +2409,27 @@
                 }
             }
 
-            // 3. 重力、降落判定與高空踩空墜落機制
             const currentFloorY = getFloorY(player.position.x, player.position.z);
-            const targetGroundCameraY = currentFloorY + 1.8; // 目標相機高度為地表高度 + 1.8m 的眼睛高度
+            const targetGroundCameraY = currentFloorY + 1.8; 
 
             if (player.position.y > targetGroundCameraY || !player.onGround) {
-                // 處於空中、正在跳躍，或從高台上踩空落下
                 player.onGround = false;
-                player.velocity.y -= 22 * delta; // 重力加速度
+                player.velocity.y -= 22 * delta; 
                 player.position.y += player.velocity.y * delta;
 
-                // 若下落後低於目標地表高度，則判定為安穩降落
                 if (player.position.y <= targetGroundCameraY) {
                     player.position.y = targetGroundCameraY;
                     player.onGround = true;
                     player.velocity.y = 0;
                 }
             } else {
-                // 在平面或高台頂部上移動
                 player.position.y = targetGroundCameraY;
                 player.onGround = true;
                 player.velocity.y = 0;
             }
 
-            // 觸發跳躍（必須在地面或平台頂部上才能起跳）
             if (player.onGround && keyMap['Space']) {
-                player.velocity.y = 8.5; // 彈性起跳速度，提升至 8.5m/s 以便流暢登上所有戰術點位
+                player.velocity.y = 8.5; 
                 player.onGround = false;
             }
         }
@@ -1741,20 +2441,16 @@
             enemiesGroup.children.forEach(enemy => {
                 const data = enemy.userData;
 
-                // 1. Enemy look towards player model
                 enemy.lookAt(new THREE.Vector3(pCoord.x, enemy.position.y, pCoord.z));
 
-                // 2. Sideways Strafe patrol movement
                 const distToSpawn = enemy.position.x - data.spawnX;
                 if (Math.abs(distToSpawn) > data.patrolLimit) {
-                    data.patrolDir *= -1; // Reverse path direction
+                    data.patrolDir *= -1; 
                 }
                 enemy.position.x += data.patrolDir * data.speed;
 
-                // 3. Firing cycle triggers
                 const distToPlayer = enemy.position.distanceTo(pCoord);
                 
-                // Only fire within realistic sight distance line (25 meters)
                 if (distToPlayer < 30.0 && (now - data.lastShotTime > data.fireCooldown)) {
                     data.lastShotTime = now;
                     enemyShootAtPlayer(enemy);
@@ -1763,32 +2459,26 @@
         }
 
         function enemyShootAtPlayer(enemy) {
-            // Draw visual red tracer heading player
             const muzzlePos = enemy.position.clone();
-            muzzlePos.y += 0.85; // Chest Gun level
+            muzzlePos.y += 0.85; 
             
-            const spread = 0.08; // Enemy inaccuracy margin
+            const spread = 0.08; 
             const targetPos = player.position.clone();
-            targetPos.y += (Math.random() - 0.5) * 0.5 - 0.3; // head-torso variance
+            targetPos.y += (Math.random() - 0.5) * 0.5 - 0.3; 
             targetPos.x += (Math.random() - 0.5) * spread;
             targetPos.z += (Math.random() - 0.5) * spread;
 
-            // Visual tracer line showing projectile heading
             createTracer(muzzlePos, targetPos);
 
-            // Compute hit chance (slightly less lethal if moving)
             const randomPick = Math.random();
-            if (randomPick > 0.45) { // 55% average hit rate
+            if (randomPick > 0.45) { 
                 playSound('hurt');
                 
-                // Damage calculation
                 let damageDealt = 10 + Math.floor(Math.random() * 12);
                 
-                // Increase damage on harder difficulties
                 if (activeDiff === 'hard') damageDealt *= 1.25;
                 if (activeDiff === 'expert') damageDealt *= 1.5;
 
-                // Armor absorp mechanic (CS-like: armor takes 40% of standard punch)
                 if (player.armor > 0) {
                     player.hp -= damageDealt * 0.6;
                     player.armor -= damageDealt * 0.4;
@@ -1798,7 +2488,6 @@
 
                 updateHUD();
 
-                // Red full overlay warning screen flash
                 damageFlash.style.backgroundColor = "rgba(220, 38, 38, 0.3)";
                 setTimeout(() => {
                     damageFlash.style.backgroundColor = "rgba(220, 38, 38, 0)";
@@ -1815,9 +2504,43 @@
         function handleC4Timing() {
             const now = performance.now();
             
-            // Adjust C4 beep cadence frequency based on urgency
+            if (isMultiplayer) {
+                if (isHost) {
+                    // 房長 (Host) 作為主機時間基準
+                    bombTimeRemaining -= clock.getDelta();
+                    if (bombTimeRemaining <= 0) {
+                        bombTimeRemaining = 0;
+                        triggerDefeat("explosion"); // Host(CT) 敗，T方勝
+                        
+                        if (p2pConn) {
+                            p2pConn.send({
+                                type: 'game_over',
+                                resolution: 'victory', // 房客(T)勝利
+                                reason: 'explosion'
+                            });
+                        }
+                    }
+                    if (p2pConn) {
+                        p2pConn.send({
+                            type: 'timer_sync',
+                            time: bombTimeRemaining
+                        });
+                    }
+                } else {
+                    // 房客(Client)透過 Host 的 time_sync 同步，避免兩端時間誤差
+                }
+            } else {
+                bombTimeRemaining -= clock.getDelta();
+                if (bombTimeRemaining <= 0) {
+                    bombTimeRemaining = 0;
+                    triggerDefeat("explosion");
+                }
+            }
+
+            hudTimer.innerText = bombTimeRemaining.toFixed(2);
+
             if (bombTimeRemaining < 10) {
-                c4TickInterval = 250; // Super urgent beeping
+                c4TickInterval = 250; 
             } else if (bombTimeRemaining < 20) {
                 c4TickInterval = 500;
             } else {
@@ -1826,24 +2549,13 @@
 
             if (now - lastC4TickTime > c4TickInterval) {
                 lastC4TickTime = now;
-                
-                // Pulse beep sound
                 playSound('beep');
 
-                // Visual flash C4 sphere shell
                 c4Light.material.color.setHex(0xffffff);
                 setTimeout(() => {
                     c4Light.material.color.setHex(0xff0000);
                 }, 80);
             }
-
-            // Count countdown timers
-            bombTimeRemaining -= clock.getDelta();
-            if (bombTimeRemaining <= 0) {
-                bombTimeRemaining = 0;
-                triggerDefeat("explosion");
-            }
-            hudTimer.innerText = bombTimeRemaining.toFixed(2);
         }
     </script>
 </body>
