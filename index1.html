@@ -137,7 +137,7 @@
                     <div class="space-y-1 text-left">
                         <label class="text-[10px] text-zinc-400">輸入對手的連線房號 (Room ID):</label>
                         <div class="flex space-x-1.5">
-                            <input type="text" id="join-peer-id" placeholder="貼上對手的房號..." class="flex-1 bg-zinc-950 border border-zinc-800 rounded px-2 py-1 text-xs text-zinc-200 font-mono focus:outline-none focus:border-amber-500">
+                            <input type="text" id="join-peer-id" placeholder="貼上對手的 5 位數房號..." class="flex-1 bg-zinc-950 border border-zinc-800 rounded px-2 py-1 text-xs text-zinc-200 font-mono focus:outline-none focus:border-amber-500">
                             <button type="button" id="connect-btn" class="bg-amber-500 hover:bg-amber-600 text-zinc-950 font-bold px-3 py-1 rounded text-xs uppercase transition-colors">連線對決</button>
                         </div>
                     </div>
@@ -978,23 +978,69 @@
             document.getElementById('p2p-status').innerText = '連線狀態: ' + text;
         }
 
+        // 產生極短 5 位數純數字房號
+        function generateShortId() {
+            // 產生 10000 到 99999 之間的 5 位數隨機數字
+            return Math.floor(10000 + Math.random() * 90000).toString();
+        }
+
         function initPeerJS() {
             if (peer) return; 
             
-            peer = new Peer();
+            const customId = generateShortId();
+
+            // 使用 5 位數短房號與公用 STUN 伺服器配置初始化 Peer 物件
+            peer = new Peer(customId, {
+                debug: 1, // 僅記錄錯誤，減少控制台壓力
+                config: {
+                    iceServers: [
+                        { urls: 'stun:stun.l.google.com:19302' },
+                        { urls: 'stun:stun1.l.google.com:19302' },
+                        { urls: 'stun:stun2.l.google.com:19302' }
+                    ]
+                }
+            });
             
             peer.on('open', (id) => {
                 document.getElementById('my-peer-id').innerText = id;
                 updateP2PStatus('等待連線 (Host)...');
             });
+
+            // 監聽信令伺服器斷線情況，自動嘗試重連
+            peer.on('disconnected', () => {
+                console.warn('與信令伺服器斷開，嘗試重新連線中...');
+                updateP2PStatus('信令伺服器斷線，重試中...');
+                peer.reconnect();
+            });
             
             peer.on('error', (err) => {
-                console.error(err);
-                updateP2PStatus('連線錯誤: ' + err.type);
+                console.error('PeerJS 錯誤:', err);
+                if (err.type === 'peer-unavailable') {
+                    updateP2PStatus('找不到該房號，請確認輸入是否正確');
+                } else if (err.type === 'unavailable-id') {
+                    // 若 5 位數房號已被他人佔用，自動觸發重新生成機制
+                    updateP2PStatus('房號已被佔用，正在重新分配...');
+                    peer.destroy();
+                    peer = null;
+                    setTimeout(initPeerJS, 500); 
+                } else if (err.type === 'disconnected') {
+                    updateP2PStatus('已斷線，重新嘗試連接...');
+                    peer.reconnect();
+                } else {
+                    updateP2PStatus('連線錯誤: ' + err.type);
+                }
             });
             
             // 當別人發起連線（我是 Host）
             peer.on('connection', (conn) => {
+                // 如果已經有連線，則拒絕新連線
+                if (isP2PConnected) {
+                    conn.on('open', () => {
+                        conn.send({ type: 'game_over', resolution: 'defeat', reason: '房間已滿' });
+                        setTimeout(() => conn.close(), 500);
+                    });
+                    return;
+                }
                 p2pConn = conn;
                 isHost = true;
                 setupP2PConnection();
@@ -1003,19 +1049,32 @@
 
         // 房客主動發起連線
         document.getElementById('connect-btn').addEventListener('click', () => {
+            if (!peer || !peer.open) {
+                updateP2PStatus('信令伺服器未就緒，請稍後');
+                return;
+            }
+
             const targetId = document.getElementById('join-peer-id').value.trim();
             if (!targetId) {
                 updateP2PStatus('請輸入對手 ID');
                 return;
             }
+
+            if (targetId === peer.id) {
+                updateP2PStatus('不能連線至您自己的房號！');
+                return;
+            }
             
-            updateP2PStatus('連線中...');
-            p2pConn = peer.connect(targetId);
+            updateP2PStatus('正在建立通訊軌道...');
+            // 使用 reliable 連線確保 WebRTC 傳輸不漏封包
+            p2pConn = peer.connect(targetId, {
+                reliable: true
+            });
             isHost = false; // 我是 Client (T 守護者)
             setupP2PConnection();
         });
 
-        // 複製 ID 按鈕 (不使用 navigator.clipboard 避免 iframe 權限報錯)
+        // 複製 ID 按鈕
         document.getElementById('copy-id-btn').addEventListener('click', () => {
             const idText = document.getElementById('my-peer-id').innerText;
             if (idText && idText !== "載入中...") {
@@ -1037,11 +1096,20 @@
         });
 
         function setupP2PConnection() {
-            isP2PConnected = true;
-            updateP2PStatus('連線成功 (Connected)!');
+            if (!p2pConn) return;
 
-            // 告知房客房主就緒
+            updateP2PStatus('正在建立通道 (WebRTC Handshake)...');
+
+            // 只有在 DataChannel 真正 'open' 後，才啟用 isP2PConnected 開始傳送高頻資料，防止握手前寫入崩潰
             p2pConn.on('open', () => {
+                isP2PConnected = true;
+                updateP2PStatus('連線成功 (Connected)!');
+
+                // 建立連線對手 3D 模型
+                createOpponentMesh();
+                updateHUD();
+
+                // 告知房客房主就緒
                 if (isHost) {
                     p2pConn.send({
                         type: 'init',
@@ -1059,7 +1127,7 @@
             });
 
             p2pConn.on('error', (err) => {
-                console.error(err);
+                console.error('DataConnection 錯誤:', err);
                 handleP2PDisconnect();
             });
         }
@@ -2306,24 +2374,28 @@
                 handleC4Timing();
                 checkBombProximity();
 
-                // 多人連線下：以 30Hz 頻率廣播本地狀態
+                // 多人連線下：以 30Hz 頻率廣播本地狀態 (在 isP2PConnected 被設為 true 後才執行，防止 handshake 前寫入崩潰)
                 if (isMultiplayer && isP2PConnected && p2pConn) {
                     const now = performance.now();
                     if (now - lastBroadcastTime > BROADCAST_INTERVAL) {
                         lastBroadcastTime = now;
-                        p2pConn.send({
-                            type: 'state',
-                            x: player.position.x,
-                            y: player.position.y,
-                            z: player.position.z,
-                            yaw: yaw,
-                            pitch: pitch,
-                            activeWpnIdx: activeWpnIdx,
-                            isFiring: isFiring,
-                            isReloading: isReloading,
-                            isDefusing: player.isDefusing,
-                            defuseProgress: player.defuseProgress
-                        });
+                        try {
+                            p2pConn.send({
+                                type: 'state',
+                                x: player.position.x,
+                                y: player.position.y,
+                                z: player.position.z,
+                                yaw: yaw,
+                                pitch: pitch,
+                                activeWpnIdx: activeWpnIdx,
+                                isFiring: isFiring,
+                                isReloading: isReloading,
+                                isDefusing: player.isDefusing,
+                                defuseProgress: player.defuseProgress
+                            });
+                        } catch (e) {
+                            console.error('廣播位置資料失敗:', e);
+                        }
                     }
                 }
             }
@@ -2434,6 +2506,7 @@
             }
         }
 
+        // --- 敵人 AI 邏輯 ---
         function updateEnemyAI(delta) {
             const now = performance.now();
             const pCoord = player.position.clone();
